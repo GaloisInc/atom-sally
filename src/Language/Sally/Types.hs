@@ -9,6 +9,8 @@
 --
 -- Types reflecting the basic Sally input language sections and base types
 --
+{-# LANGUAGE OverloadedStrings #-}
+
 module Language.Sally.Types (
     -- * Base types
     SallyBaseType
@@ -22,12 +24,19 @@ module Language.Sally.Types (
   , SallySystem
 ) where
 
-import Data.Text (Text)
-import qualified Data.Text as T
+import Data.Text.Lazy (Text)
+import qualified Data.Text.Lazy as T
+import Text.PrettyPrint.Leijen.Text
 
+-- | Number of spaces to indent in the pretty printer
+n :: Int
+n = 2
 
 newtype Name = Name { textFromName :: Text }
   deriving (Show, Eq)
+
+instance Pretty Name where
+  pretty = string . textFromName
 
 nameFromString :: String -> Name
 nameFromString = Name . T.pack
@@ -91,3 +100,11 @@ data SallySystem = SallySystem
   , systemTransitionName :: Name
   }
   deriving (Show, Eq)
+
+instance Pretty SallySystem where
+  pretty (SallySystem { systemStateName = ssn
+                     , systemInitStateName = sisn
+                     , systemTransitionName = stn
+                     })
+    = parens (string "define-system" <+> pretty ssn <$$>
+              nest n (pretty sisn <$$> pretty stn))
