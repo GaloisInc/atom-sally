@@ -13,24 +13,28 @@
 
 module Language.Sally.Types (
     -- * Base types
-    SallyBaseType
-  , SallyConstant
+    SallyBaseType(..)
+  , SallyConst(..)
   , Name
+  , nameFromT
+  , nameFromS
+  , catNames
     -- * Types for defining transition systems
-  , SallyState
-  , SallyPred
-  , SallyStateFormula
-  , SallyTransition
-  , SallySystem
+  , SallyState(..)
+  , SallyPred(..)
+  , SallyStateFormula(..)
+  , SallyTransition(..)
+  , SallySystem(..)
 ) where
 
+import Data.String
 import Data.Text.Lazy (Text)
 import qualified Data.Text.Lazy as T
 import Text.PrettyPrint.Leijen.Text
 
 -- | Number of spaces to indent in the pretty printer
-n :: Int
-n = 2
+-- nNest :: Int
+-- nNest = 2
 
 newtype Name = Name { textFromName :: Text }
   deriving (Show, Eq)
@@ -38,14 +42,24 @@ newtype Name = Name { textFromName :: Text }
 instance Pretty Name where
   pretty = string . textFromName
 
-nameFromString :: String -> Name
-nameFromString = Name . T.pack
+nameFromS :: String -> Name
+nameFromS = Name . T.pack
+
+nameFromT :: Text -> Name
+nameFromT = Name
+
+instance IsString Name where
+  fromString = nameFromS
+
+-- | Concatenate names with a 'bang' separated in between
+catNames :: Name -> Name -> Name
+catNames a b = Name (textFromName a `T.append` "!" `T.append` textFromName b)
 
 -- | A defined constant. For our purposes, a real number is represented
 -- (approximated) by an exact rational number.
-data SallyConstant = SConstBool Bool
-                   | SConstInt  Integer
-                   | SConstReal Rational
+data SallyConst = SConstBool Bool
+                | SConstInt  Integer
+                | SConstReal Rational
   deriving (Show, Eq)
 
 -- | Base data types in Sally: Booleans, (mathematical) Integers, and
@@ -62,49 +76,48 @@ data SallyBaseType = SBool
 -- which are uninterpreted in the model; they can be thought of as varying
 -- non-deterministically in any system trace.
 data SallyState = SallyState
-  { stateName      :: Name
-  , stateVars      :: [(Name, SallyBaseType)]
-  , stateInputVars :: [(Name, SallyBaseType)]
+  { sName   :: Name                     -- ^ state type name
+  , sVars   :: [(Name, SallyBaseType)]  -- ^ state variables
+  , sInVars :: [(Name, SallyBaseType)]  -- ^ state input variables
   }
   deriving (Show, Eq)
 
 -- | An AST for predicates
-data SallyPred = SPConst Bool
-               | SPVar   Name
-               | SPAnd   SallyPred SallyPred
-               | SPOr    SallyPred SallyPred
-               | SPImpl  SallyPred SallyPred
-               | SPNot   SallyPred
+data SallyPred = SPConst Bool                 -- ^ boolean constant
+               | SPVar   Name                 -- ^ state variable
+               | SPAnd   SallyPred SallyPred  -- ^ and
+               | SPOr    SallyPred SallyPred  -- ^ or
+               | SPImpl  SallyPred SallyPred  -- ^ implication
+               | SPNot   SallyPred            -- ^ negation
   deriving (Show, Eq)
 
 -- | A named formula over a state type
 data SallyStateFormula = SallyStateFormula
-  { stateFormulaName   :: Name
-  , stateFormulaDomain :: Name
-  , stateFormulaPred   :: SallyPred
+  { sfName   :: Name        -- ^ state formula name
+  , sfDomain :: Name        -- ^ state formula domain
+  , sfPred   :: SallyPred   -- ^ state formula predicate
   }
   deriving (Show, Eq)
 
 -- | A transition over a given state type
 data SallyTransition = SallyTransition
-  { transitionName    :: Name
-  , transitioniDomain :: Name
-  , transitionPred    :: SallyPred
+  { traName :: Name       -- ^ transition name
+  , traDom  :: Name       -- ^ transition domain
+  , traPred :: SallyPred  -- ^ transition relation
   }
   deriving (Show, Eq)
 
 -- | A transition system declaration
 data SallySystem = SallySystem
-  { systemStateName :: Name
-  , systemInitStateName :: Name
-  , systemTransitionName :: Name
+  { sysSN  :: Name  -- ^ system state name
+  , sysISN :: Name  -- ^ system init state name
+  , sysTN  :: Name  -- ^ system transition name
   }
   deriving (Show, Eq)
 
 instance Pretty SallySystem where
-  pretty (SallySystem { systemStateName = ssn
-                     , systemInitStateName = sisn
-                     , systemTransitionName = stn
-                     })
-    = parens (string "define-system" <+> pretty ssn <$$>
-              nest n (pretty sisn <$$> pretty stn))
+    pretty ss = parens (fillSep [ string "define-system"
+                                , pretty (sysSN ss)
+                                , pretty (sysISN ss)
+                                , pretty (sysTN ss)
+                                ])
