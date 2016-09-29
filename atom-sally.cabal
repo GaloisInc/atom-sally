@@ -26,6 +26,7 @@ library
   -- other-modules:
   -- other-extensions:
   build-depends:       base           >=4.9 && <4.10
+                     , containers     >=0.5
                      , text           >=1.2
                      , wl-pprint-text >=1.1
                      , atom           >=1.1.0

@@ -18,15 +18,19 @@ module Language.Sally.Types (
   , Name
   , nameFromT
   , nameFromS
-  , catNames
+  , catNamesWith
+  , bangNames
+  , scoreNames
     -- * Types for defining transition systems
   , SallyState(..)
   , SallyPred(..)
+  , SallyExpr(..)
   , SallyStateFormula(..)
   , SallyTransition(..)
   , SallySystem(..)
 ) where
 
+import Data.Sequence (Seq)
 import Data.String
 import Data.Text.Lazy (Text)
 import qualified Data.Text.Lazy as T
@@ -52,8 +56,16 @@ instance IsString Name where
   fromString = nameFromS
 
 -- | Concatenate names with a 'bang' separated in between
-catNames :: Name -> Name -> Name
-catNames a b = Name (textFromName a `T.append` "!" `T.append` textFromName b)
+catNamesWith :: Text -> Name -> Name -> Name
+catNamesWith sp a b = Name (textFromName a `T.append` sp `T.append` textFromName b)
+
+-- | Concatenate names with a 'bang' separated in between
+bangNames :: Name -> Name -> Name
+bangNames = catNamesWith "!"
+
+-- | Concatenate names with an 'underscore' separated in between
+scoreNames :: Name -> Name -> Name
+scoreNames = catNamesWith "_"
 
 -- | A defined constant. For our purposes, a real number is represented
 -- (approximated) by an exact rational number.
@@ -85,10 +97,17 @@ data SallyState = SallyState
 -- | An AST for predicates
 data SallyPred = SPConst Bool                 -- ^ boolean constant
                | SPVar   Name                 -- ^ state variable
-               | SPAnd   SallyPred SallyPred  -- ^ and
-               | SPOr    SallyPred SallyPred  -- ^ or
+               | SPAnd   (Seq SallyPred)      -- ^ and
+               | SPOr    (Seq SallyPred)      -- ^ or
                | SPImpl  SallyPred SallyPred  -- ^ implication
                | SPNot   SallyPred            -- ^ negation
+               | SPEq    SallyExpr SallyExpr  -- ^ equality
+  deriving (Show, Eq)
+
+data SallyExpr = SEConst SallyConst            -- ^ constant
+               | SEVar   Name                  -- ^ variable
+               | SEAdd   SallyExpr SallyExpr   -- ^ addition
+               | SEMult  SallyConst SallyExpr  -- ^ constant mult
   deriving (Show, Eq)
 
 -- | A named formula over a state type
