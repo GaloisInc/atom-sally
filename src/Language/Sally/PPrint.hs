@@ -7,18 +7,27 @@
 -- Stability   :  experimental
 -- Portability :  unknown
 --
--- Exports a pretty printer for the main Sally types
+-- Exports a pretty printer for the result of translation.
 --
 module Language.Sally.PPrint (
-  pprintSystem
+    pprintSystem
+  , putSystem
+  , hPutSystem
 ) where
 
 import qualified Data.Text.Lazy as TL
+import System.IO (Handle)
 import Text.PrettyPrint.Leijen.Text
 
 import Language.Sally.Types
 
-pprintSystem :: SallySystem -> TL.Text
+pprintSystem :: TrResult -> TL.Text
 pprintSystem = displayT . renderPretty ribbon wid . pretty
   where ribbon = 72 / 80 :: Float
         wid    = 80
+
+putSystem :: TrResult -> IO ()
+putSystem = putDoc . pretty
+
+hPutSystem :: Handle -> TrResult -> IO ()
+hPutSystem h = hPutDoc h . pretty

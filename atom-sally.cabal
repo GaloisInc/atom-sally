@@ -23,6 +23,7 @@ library
   exposed-modules:   Language.Sally.Types
                    , Language.Sally.PPrint
                    , Language.Sally.Translation
+                   , SExpPP
   -- other-modules:
   -- other-extensions:
   build-depends:       base           >=4.9 && <4.10
