@@ -14,6 +14,7 @@
 module Language.Sally.Types (
     -- * Name type
     Name
+  , textFromName
   , nameFromT
   , nameFromS
   , catNamesWith
@@ -218,6 +219,7 @@ isMultConst (SEVar _) = False
 isMultConst (SEPre _) = False
 isMultConst (SEArith (SAAdd x y))  = isMultConst x && isMultConst y
 isMultConst (SEArith (SAMult x y)) = isMultConst x && isMultConst y
+isMultConst (SEMux{}) = False
 
 eqExpr :: SallyExpr -> SallyExpr -> SallyExpr
 eqExpr x y = SEPre (SPEq x y)

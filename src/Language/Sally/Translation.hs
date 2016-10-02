@@ -12,7 +12,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Language.Sally.Translation (
-    translate
+    compile
+  , translate
   , TrConfig(..)
 ) where
 
@@ -20,6 +21,8 @@ import Control.Arrow (second)
 import Data.Maybe (catMaybes, fromMaybe)
 import Data.Sequence ((|>))
 import qualified Data.Sequence as Seq
+import qualified Data.Text.Lazy as T
+import System.Exit
 
 import qualified Language.Atom.Analysis    as AAna
 import qualified Language.Atom.Elaboration as AEla
@@ -27,6 +30,25 @@ import qualified Language.Atom.Expressions as AExp
 import qualified Language.Atom.UeMap       as AUe
 
 import Language.Sally.Types
+
+
+-- Entry Point from Atom -------------------------------------------------------
+
+-- | Compiles an atom description to Sally. The 'TrResult' can then be printed
+-- or written to disk.
+compile :: Name
+        -> TrConfig
+        -> AEla.Atom ()
+        -> IO (TrResult)
+compile name config atom' = do
+  let aname = T.unpack . textFromName $ name
+  res <- AEla.elaborate AUe.emptyMap aname atom'
+  case res of
+   Nothing -> do
+     putStrLn "ERROR: Design rule checks failed."
+     exitWith (ExitFailure 1)
+   Just (umap, (state, rules, _assertionNames, _coverageNames, _probeNames)) -> do
+     return (translate config name state umap rules)
 
 
 -- Main Translation Code -------------------------------------------------------
@@ -199,7 +221,6 @@ trUExpr :: AUe.UeMap -> [(AUe.Hash, SallyVar)] -> AUe.Hash -> SallyExpr
 trUExpr umap ues h =
   case AUe.getUE h umap of
     AUe.MUVRef (AUe.MUV _ k _) -> varExpr' (trName k)  -- TODO is this the right name?
-    AUe.MUVRef (AUe.MUVArray _ _)  -> aLangErr "arrays"
     AUe.MUVRef (AUe.MUVArray _ _)  -> aLangErr "arrays"
     AUe.MUVRef (AUe.MUVExtern k _) -> aLangErr $ "external variable " ++ k
     AUe.MUVRef (AUe.MUVChannel _ k _) -> varExpr' (fst . mkChanStateNames $ trName k)
