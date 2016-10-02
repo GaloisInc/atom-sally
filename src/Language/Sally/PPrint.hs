@@ -12,6 +12,7 @@
 module Language.Sally.PPrint (
     pprintSystem
   , putSystem
+  , putSystemLn
   , hPutSystem
 ) where
 
@@ -28,6 +29,9 @@ pprintSystem = displayT . renderPretty ribbon wid . pretty
 
 putSystem :: TrResult -> IO ()
 putSystem = putDoc . pretty
+
+putSystemLn :: TrResult -> IO ()
+putSystemLn tr = putSystem tr >> putStrLn ""
 
 hPutSystem :: Handle -> TrResult -> IO ()
 hPutSystem h = hPutDoc h . pretty
