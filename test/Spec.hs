@@ -24,7 +24,7 @@ atom1 = atom "atom1" $ do
 
 basicAtomTests :: TestTree
 basicAtomTests = testGroup "basic Atom translation tests"
-  [ testCompile "atom1" atom1 ]
+  [ testCompile "atom1_test" atom1 ]
 
 testCompile :: String -> Atom () -> TestTree
 testCompile nm atom' = testCase ("testCompile " ++ nm) $ do
