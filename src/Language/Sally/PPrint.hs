@@ -33,5 +33,5 @@ putSystem = putDoc . pretty
 putSystemLn :: TrResult -> IO ()
 putSystemLn tr = putSystem tr >> putStrLn ""
 
-hPutSystem :: Handle -> TrResult -> IO ()
-hPutSystem h = hPutDoc h . pretty
+hPutSystem :: TrResult -> Handle -> IO ()
+hPutSystem tr h = hPutDoc h (pretty tr)
