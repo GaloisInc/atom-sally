@@ -122,6 +122,7 @@ trState name sh = SallyState (mkStateTypeName name) vars invars
     vars = if AEla.isHierarchyEmpty sh then []
            else go Nothing sh
 
+    -- TODO (Maybe Name) for prefix is a little awkward here
     go :: Maybe Name -> AEla.StateHierarchy -> [(Name, SallyBaseType)]
     go prefix (AEla.StateHierarchy nm items) =
       concatMap (go (Just $ prefix `bangPrefix` (trName nm))) items
@@ -132,8 +133,8 @@ trState name sh = SallyState (mkStateTypeName name) vars invars
       in [(chanVar, trTypeConst c), (chanReady, SBool)]
     go _prefix (AEla.StateArray _ _) = error "atom-sally does not yet support arrays"
 
-    bangPrefix :: Maybe Name -> Name -> Name
-    bangPrefix mn n = maybe n (`bangNames` n) mn
+bangPrefix :: Maybe Name -> Name -> Name
+bangPrefix mn n = maybe n (`bangNames` n) mn
 
 -- | Produce a predicate describing the initial state of the system.
 trInit :: Name -> AEla.StateHierarchy -> SallyStateFormula
@@ -142,16 +143,16 @@ trInit name sh = SallyStateFormula (mkInitStateName name)
                                    spred
   where
     spred = simplifyAnds $ if AEla.isHierarchyEmpty sh then (SPConst True)
-                           else go name sh
+                           else go Nothing sh
 
-    go :: Name -> AEla.StateHierarchy -> SallyPred
+    go :: Maybe Name -> AEla.StateHierarchy -> SallyPred
     go prefix (AEla.StateHierarchy nm items) =
-      SPAnd (Seq.fromList $ map (go (prefix `bangNames` (trName nm))) items)
+      SPAnd (Seq.fromList $ map (go (Just $ prefix `bangPrefix` (trName nm))) items)
     go prefix (AEla.StateVariable nm c) =
-      SPAnd (Seq.fromList [SPEq (varExpr' (prefix `bangNames` (trName nm)))
+      SPAnd (Seq.fromList [SPEq (varExpr' (prefix `bangPrefix` (trName nm)))
                                 (trConstE c)])
     go prefix (AEla.StateChannel nm c b) =
-      let (chanVar, chanReady) = mkChanStateNames (prefix `bangNames` (trName nm))
+      let (chanVar, chanReady) = mkChanStateNames (prefix `bangPrefix` (trName nm))
       in SPAnd (  Seq.empty
                |> SPEq (varExpr' chanVar) (trConstE c)
                |> SPEq (varExpr' chanReady) (trConstE b))
@@ -201,13 +202,18 @@ trRules name umap rules = (catMaybes $ map trRule rules) ++ [master]
           in map (\(h, v) -> (v, trUExpr umap ues h)) ues
         mkLetBinds _ = error "impossible! assert or coverage rule found in mkLetBinds"
 
+        -- TODO Avoid the ugly name mangling hack here by having variables
+        -- in Atom carry not a name, but a structured heirarchy of names that
+        -- can be flattened differently depending on the compile target
         mkPred :: AEla.Rule -> SallyPred
         mkPred r@(AEla.Rule{}) =
           let ues = getUEs r
               lkErr h = "trRules: failed to lookup untyped expr " ++ show h
               lk h = fromMaybe (error $ lkErr h) $ lookup h ues
               handleAssign (muv, h) = case muv of
-                AUe.MUV _ n _ -> SPEq (varExpr' (nextName . trName $ n)) (SEVar . lk $ h)
+                AUe.MUV _ n _ ->
+                  let u = uglyHack n
+                  in SPEq (varExpr' (nextName . trName $ u)) (SEVar . lk $ h)
                 AUe.MUVArray{}   -> error "trRules: arrays are not supported"
                 AUe.MUVExtern{}  -> error "trRules: external vars are not supported"
                 AUe.MUVChannel{} -> error "trRules: Chan can't appear in lhs of assign"
@@ -217,6 +223,11 @@ trRules name umap rules = (catMaybes $ map trRule rules) ++ [master]
           --      the ones which are not involved in an assignment
         mkPred _ = error "impossible! assert or coverage rule found in mkPred"
 
+-- | s/\./!/g
+uglyHack :: String -> String
+uglyHack = map dotToBang
+  where dotToBang '.' = '!'
+        dotToBang c   = c
 
 -- Translate Expressions -------------------------------------------------------
 
