@@ -165,13 +165,11 @@ data SallyPred = SPConst Bool                    -- ^ boolean constant
                | SPOr    (Seq SallyPred)         -- ^ or
                | SPImpl  SallyPred SallyPred     -- ^ implication
                | SPNot   SallyPred               -- ^ logical negation
-
                | SPEq    SallyExpr SallyExpr     -- ^ ==
-
-               | SPLEq   SallyExpr SallyExpr   -- ^ <=
-               | SPGEq   SallyExpr SallyExpr   -- ^ >=
-               | SPLt    SallyExpr SallyExpr   -- ^ <
-               | SPGt    SallyExpr SallyExpr   -- ^ >
+               | SPLEq   SallyExpr SallyExpr     -- ^ <=
+               | SPGEq   SallyExpr SallyExpr     -- ^ >=
+               | SPLt    SallyExpr SallyExpr     -- ^ <
+               | SPGt    SallyExpr SallyExpr     -- ^ >
   deriving (Show, Eq)
 
 instance ToSExp SallyPred where
@@ -180,7 +178,7 @@ instance ToSExp SallyPred where
   toSExp (SPAnd   xs)  = SXList (bareText "and" : toList (fmap toSExp xs))
   toSExp (SPOr    xs)  = SXList (bareText "or"  : toList (fmap toSExp xs))
   toSExp (SPImpl  p q) = SXList [bareText "=>", toSExp p, toSExp q]
-  toSExp (SPNot   p)   = SXList [bareText "!",  toSExp p]
+  toSExp (SPNot   p)   = SXList [bareText "not",  toSExp p]
   toSExp (SPEq    x y) = SXList [bareText "=",  toSExp x, toSExp y]
   toSExp (SPLEq   x y) = SXList [bareText "<=", toSExp x, toSExp y]
   toSExp (SPGEq   x y) = SXList [bareText ">=", toSExp x, toSExp y]
@@ -195,6 +193,7 @@ data SallyArith = SAAdd   SallyExpr SallyExpr  -- ^ addition
 instance ToSExp SallyArith where
   toSExp (SAAdd x y)  = SXList [bareText "+", toSExp x, toSExp y]
   toSExp (SAMult x y) = SXList [bareText "*", toSExp x, toSExp y]
+
 
 -- Better Constructors ---------------------------------------------------------
 
@@ -230,23 +229,40 @@ ltExpr :: SallyExpr -> SallyExpr -> SallyExpr
 ltExpr x y = SEPre (SPLt x y)
 
 notExpr :: SallyExpr -> SallyExpr
-notExpr x = SEPre (SPNot x')
-  where x' = case x of
-               SEPre w -> w
-               _       -> error "notExpr: malformed '!' expression"
+notExpr x = SEPre (SPNot (getPred x))
+
+-- | Turn a SallyExpr into a SallyPred (if possible)
+getPred :: SallyExpr -> SallyPred
+getPred x = case x of
+              SEPre w   -> w
+              SELit{}   -> SPExpr x
+              SEVar{}   -> SPExpr x
+              SEMux{}   -> SPExpr x
+              SEArith{} -> error ("notExpr: cannot turn expression into predicate: "
+                                 ++ show x)
 
 muxExpr :: SallyExpr -> SallyExpr -> SallyExpr -> SallyExpr
 muxExpr = SEMux
 
--- TODO efficiently concat sequences if applicable
 andExprs :: [SallyExpr] -> SallyExpr
-andExprs es = SEPre $ andPreds (fmap getPre es)
-  where getPre e = case e of
-                     SEPre w -> w
-                     _       -> error "andExprs: malformed 'and' expression"
+andExprs es = SEPre $ andPreds (fmap getPred es)
 
 andPreds :: [SallyPred] -> SallyPred
 andPreds = SPAnd . flattenAnds . Seq.fromList
+
+orExprs :: [SallyExpr] -> SallyExpr
+orExprs es = SEPre $ orPreds (fmap getPred es)
+
+orPreds :: [SallyPred] -> SallyPred
+orPreds = SPOr . Seq.fromList
+
+varExpr :: SallyVar -> SallyExpr
+varExpr = SEVar
+
+varExpr' :: Name -> SallyExpr
+varExpr' = SEVar . varFromName
+
+-- Simplification --------------------------------------------------------------
 
 flattenAnds :: Seq SallyPred -> Seq SallyPred
 flattenAnds (viewl -> xs) =
@@ -270,7 +286,7 @@ simplifyAnds p =
       in case viewl ys of
            EmptyL  -> SPConst True           -- empty 'and'
            z :< zs -> if Seq.null zs then z  -- single elt. 'and'
-                      else SPAnd zs          -- multiple
+                      else SPAnd ys          -- multiple
     SPExpr (SEPre q) -> simplifyAnds q       -- strip off SPExpr . SEPre
     -- other cases
     SPConst _   -> p
@@ -279,20 +295,6 @@ simplifyAnds p =
     SPNot   x   -> SPNot (simplifyAnds x)
     _           -> p  -- TODO simplify arithmetic predicates?
 
-orExprs :: [SallyExpr] -> SallyExpr
-orExprs es = SEPre $ orPreds (fmap getPre es)
-  where getPre e = case e of
-                     SEPre w -> w
-                     _       -> error "orExprs: malformed 'and' expression"
-
-orPreds :: [SallyPred] -> SallyPred
-orPreds = SPOr . Seq.fromList
-
-varExpr :: SallyVar -> SallyExpr
-varExpr = SEVar
-
-varExpr' :: Name -> SallyExpr
-varExpr' = SEVar . varFromName
 
 -- Compound Sally Types --------------------------------------------------------
 
@@ -311,7 +313,7 @@ data SallyState = SallyState
 
 instance ToSExp SallyState where
   toSExp (SallyState {sName=sn, sVars=sv, sInVars=siv}) =
-    SXList $ [ bareText "define-state"
+    SXList $ [ bareText "define-state-type"
              , toSExp sn
              , SXList $ map (\(n,t) -> SXList [toSExp n, toSExp t]) sv
              ] ++
@@ -328,7 +330,7 @@ data SallyStateFormula = SallyStateFormula
 
 instance ToSExp SallyStateFormula where
   toSExp (SallyStateFormula {sfName=sn, sfDomain=sd, sfPred=sp}) =
-    SXList [ bareText "define-state-formula"
+    SXList [ bareText "define-states"
            , toSExp sn
            , toSExp sd
            , toSExp sp
@@ -368,7 +370,7 @@ data SallySystem = SallySystem
   deriving (Show, Eq)
 
 instance ToSExp SallySystem where
-    toSExp ss = SXList [ bareText "define-system"
+    toSExp ss = SXList [ bareText "define-transition-system"
                        , toSExp (sysSN ss)
                        , toSExp (sysISN ss)
                        , toSExp (sysTN ss)

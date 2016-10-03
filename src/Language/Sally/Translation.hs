@@ -149,8 +149,7 @@ trInit name sh = SallyStateFormula (mkInitStateName name)
     go prefix (AEla.StateHierarchy nm items) =
       SPAnd (Seq.fromList $ map (go (Just $ prefix `bangPrefix` (trName nm))) items)
     go prefix (AEla.StateVariable nm c) =
-      SPAnd (Seq.fromList [SPEq (varExpr' (prefix `bangPrefix` (trName nm)))
-                                (trConstE c)])
+      SPEq (varExpr' (prefix `bangPrefix` (trName nm))) (trConstE c)
     go prefix (AEla.StateChannel nm c b) =
       let (chanVar, chanReady) = mkChanStateNames (prefix `bangPrefix` (trName nm))
       in SPAnd (  Seq.empty
