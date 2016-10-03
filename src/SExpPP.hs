@@ -39,7 +39,7 @@ instance ToSExp SExp where
 sxPrettyDefault :: SExp -> Doc
 sxPrettyDefault (SXBare x) = x
 sxPrettyDefault (SXList []) = lparen <> rparen
-sxPrettyDefault (SXList xs) = parens (align (vcat (fmap sxPretty xs)))
+sxPrettyDefault (SXList xs) = parens . group . align . vsep . fmap sxPretty $ xs
 -- sxPrettyDefault (SXList ll@(x:_)) = case x of
 --   SXBare _ -> parens (hang' (fillSep (map sxPretty ll)))
 --   SXList _ -> parens (fillSep (map sxPretty ll))
