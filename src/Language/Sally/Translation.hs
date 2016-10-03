@@ -209,7 +209,7 @@ trRules name umap rules = (catMaybes $ map trRule rules) ++ [master]
                 AUe.MUVExtern{}  -> error "trRules: external vars are not supported"
                 AUe.MUVChannel{} -> error "trRules: Chan can't appear in lhs of assign"
               ops = map handleAssign (AEla.ruleAssigns r)
-          in SPAnd (Seq.fromList ops)
+          in simplifyAnds $ SPAnd (Seq.fromList ops)
           -- TODO Important! add next. = state. for all other state vars, i.e.
           --      the ones which are not involved in an assignment
         mkPred _ = error "impossible! assert or coverage rule found in mkPred"

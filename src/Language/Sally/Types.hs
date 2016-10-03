@@ -10,6 +10,7 @@
 -- Types reflecting the basic Sally input language sections and base types
 --
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module Language.Sally.Types (
     -- * Name type
@@ -49,10 +50,11 @@ module Language.Sally.Types (
   , orExprs
   , varExpr
   , varExpr'
+  , simplifyAnds
 ) where
 
 import Data.Foldable (toList)
-import Data.Sequence (Seq)
+import Data.Sequence (Seq, (<|), (><), viewl, ViewL(..))
 import qualified Data.Sequence as Seq
 import Data.String
 import Data.Text.Lazy (Text)
@@ -238,16 +240,53 @@ muxExpr = SEMux
 
 -- TODO efficiently concat sequences if applicable
 andExprs :: [SallyExpr] -> SallyExpr
-andExprs es = SEPre (SPAnd . Seq.fromList $ fmap getPre es)
+andExprs es = SEPre $ andPreds (fmap getPre es)
   where getPre e = case e of
                      SEPre w -> w
                      _       -> error "andExprs: malformed 'and' expression"
 
+andPreds :: [SallyPred] -> SallyPred
+andPreds = SPAnd . flattenAnds . Seq.fromList
+
+flattenAnds :: Seq SallyPred -> Seq SallyPred
+flattenAnds (viewl -> xs) =
+  case xs of
+    EmptyL -> Seq.empty
+    a :< rest  ->
+      case a of
+        SPAnd ys -> flattenAnds ys >< flattenAnds rest
+        -- TODO enable rewriting here?
+        -- SPConst True  -> flattenAnds rest
+        -- SPConst False -> a <| Seq.empty
+        _ -> a <| flattenAnds rest
+
+-- | Top-down rewriting of 'and' terms
+simplifyAnds :: SallyPred -> SallyPred
+simplifyAnds p =
+  case p of
+    -- main case
+    SPAnd xs ->
+      let ys = flattenAnds (fmap simplifyAnds xs) :: Seq SallyPred
+      in case viewl ys of
+           EmptyL  -> SPConst True           -- empty 'and'
+           z :< zs -> if Seq.null zs then z  -- single elt. 'and'
+                      else SPAnd zs          -- multiple
+    SPExpr (SEPre q) -> simplifyAnds q       -- strip off SPExpr . SEPre
+    -- other cases
+    SPConst _   -> p
+    SPOr    xs  -> SPOr (fmap simplifyAnds xs)
+    SPImpl  x y -> SPImpl (simplifyAnds x) (simplifyAnds y)
+    SPNot   x   -> SPNot (simplifyAnds x)
+    _           -> p  -- TODO simplify arithmetic predicates?
+
 orExprs :: [SallyExpr] -> SallyExpr
-orExprs es = SEPre (SPOr . Seq.fromList $ fmap getPre es)
+orExprs es = SEPre $ orPreds (fmap getPre es)
   where getPre e = case e of
                      SEPre w -> w
                      _       -> error "orExprs: malformed 'and' expression"
+
+orPreds :: [SallyPred] -> SallyPred
+orPreds = SPOr . Seq.fromList
 
 varExpr :: SallyVar -> SallyExpr
 varExpr = SEVar
@@ -272,11 +311,12 @@ data SallyState = SallyState
 
 instance ToSExp SallyState where
   toSExp (SallyState {sName=sn, sVars=sv, sInVars=siv}) =
-    SXList [ bareText "define-state"
-           , toSExp sn
-           , SXList $ map (\(n,t) -> SXList [toSExp n, toSExp t]) sv
-           , SXList $ map (\(n,t) -> SXList [toSExp n, toSExp t]) siv
-           ]
+    SXList $ [ bareText "define-state"
+             , toSExp sn
+             , SXList $ map (\(n,t) -> SXList [toSExp n, toSExp t]) sv
+             ] ++
+             (if null siv then []
+              else [SXList $ map (\(n,t) -> SXList [toSExp n, toSExp t]) siv])
 
 -- | A named formula over a state type
 data SallyStateFormula = SallyStateFormula
