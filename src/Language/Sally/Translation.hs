@@ -120,17 +120,20 @@ trState name sh = SallyState (mkStateTypeName name) vars invars
   where
     invars = []  -- TODO expose input variables to DSL
     vars = if AEla.isHierarchyEmpty sh then []
-           else go (nameFromT "") sh
+           else go Nothing sh
 
-    go :: Name -> AEla.StateHierarchy -> [(Name, SallyBaseType)]
+    go :: Maybe Name -> AEla.StateHierarchy -> [(Name, SallyBaseType)]
     go prefix (AEla.StateHierarchy nm items) =
-      concatMap (go (prefix `bangNames` (trName nm))) items
+      concatMap (go (Just $ prefix `bangPrefix` (trName nm))) items
     go prefix (AEla.StateVariable nm c) =
-      [(prefix `bangNames` (trName nm), trTypeConst c)]
+      [(prefix `bangPrefix` (trName nm), trTypeConst c)]
     go prefix (AEla.StateChannel nm c _) =
-      let (chanVar, chanReady) = mkChanStateNames (prefix `bangNames` (trName nm))
+      let (chanVar, chanReady) = mkChanStateNames (prefix `bangPrefix` (trName nm))
       in [(chanVar, trTypeConst c), (chanReady, SBool)]
     go _prefix (AEla.StateArray _ _) = error "atom-sally does not yet support arrays"
+
+    bangPrefix :: Maybe Name -> Name -> Name
+    bangPrefix mn n = maybe n (`bangNames` n) mn
 
 -- | Produce a predicate describing the initial state of the system.
 trInit :: Name -> AEla.StateHierarchy -> SallyStateFormula
