@@ -141,8 +141,8 @@ trInit name sh = SallyStateFormula (mkInitStateName name)
                                    (mkStateTypeName name)
                                    spred
   where
-    spred = if AEla.isHierarchyEmpty sh then (SPConst True)
-             else go name sh
+    spred = simplifyAnds $ if AEla.isHierarchyEmpty sh then (SPConst True)
+                           else go name sh
 
     go :: Name -> AEla.StateHierarchy -> SallyPred
     go prefix (AEla.StateHierarchy nm items) =

@@ -401,8 +401,8 @@ instance Pretty TrResult where
       consts = if null (tresConsts tr) then text ";; NONE"
                else vcat (map sxPretty (tresConsts tr))
       consts_comment = text ";; Constants"
-      state_comment  = text ";; State type"
-      init_comment   = text ";; Initial State"
-      trans_comment  = text ";; Transitions"
-      system_comment = text ";; System Definition"
+      state_comment  = text "\n;; State type"
+      init_comment   = text "\n;; Initial State"
+      trans_comment  = text "\n;; Transitions"
+      system_comment = text "\n;; System Definition"
 
