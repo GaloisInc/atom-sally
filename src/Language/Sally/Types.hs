@@ -350,11 +350,12 @@ data SallyTransition = SallyTransition
 
 instance ToSExp SallyTransition where
   toSExp (SallyTransition {traName=tn, traDom=td, traLet=tl, traPred=tp}) =
-      SXList [ bareText "define-transition"
-             , toSExp tn
-             , toSExp td
-             , SXList [bareText "let", SXList listOfBinds, toSExp tp]
-             ]
+      SXList $ [ bareText "define-transition"
+               , toSExp tn
+               , toSExp td
+               ] ++
+               (if null listOfBinds then [toSExp tp]
+                else [SXList [bareText "let", SXList listOfBinds, toSExp tp]])
     where
       listOfBinds = map (\(v,e) -> SXList [toSExp v, toSExp e]) tl
 
