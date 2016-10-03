@@ -2,10 +2,6 @@
 
 module Main where
 
-import Test.Tasty
-import Test.Tasty.HUnit
-import Test.Tasty.QuickCheck
-
 import Language.Atom hiding (compile)
 
 import Language.Sally.Types
@@ -22,23 +18,23 @@ atom1 = atom "atom1" $ do
   cond $ (value x) <. 10
   x <== (value x) + 1
 
-basicAtomTests :: TestTree
-basicAtomTests = testGroup "basic Atom translation tests"
-  [ testCompile "atom1_test" atom1 ]
-
-testCompile :: String -> Atom () -> TestTree
-testCompile nm atom' = testCase ("testCompile " ++ nm) $ do
-  tr <- compile (nameFromS nm) TrConfig atom'
-  putSystemLn tr
-  assertBool "" True
-
 
 -- Main -----------------------------------------------------------------
 
-suite :: TestTree
-suite = testGroup "atom-sally Test Suite"
-          [ basicAtomTests
-          ]
+putHeader = putStrLn (replicate 72 '-')
+
+testCompile :: String -> Atom () -> IO ()
+testCompile nm atom' = do
+  tr <- compile (nameFromS nm) TrConfig atom'
+  putSystemLn tr
+  putHeader
+
+-- | List of 'Atom's to translate and print
+suite :: [(String, Atom ())]
+suite = [ ("test_atom1", atom1)
+        ]
 
 main :: IO ()
-main = defaultMain suite
+main = do
+  putHeader
+  mapM_ (uncurry testCompile) suite
