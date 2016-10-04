@@ -68,7 +68,7 @@ import SExpPP
 -- Name type for Sally namespaces and variables ------------------------------------
 
 newtype Name = Name { textFromName :: Text }
-  deriving (Show, Eq)
+  deriving (Show, Eq, Ord)
 
 instance ToSExp Name where
   toSExp = SXBare . text . textFromName
@@ -118,7 +118,10 @@ data SallyConst = SConstBool Bool
 
 instance ToSExp SallyConst where
   toSExp (SConstBool b) = SXBare $ if b then text "true" else text "false"
-  toSExp (SConstInt  x) = SXBare $ integer x
+  toSExp (SConstInt  x) =
+    let bare = SXBare $ integer x
+    in if x >= 0 then bare
+       else SXList [bare]  -- if x < 0, enclose in parens
   toSExp (SConstReal x) = SXBare $ rational x
 
 -- | Base data types in Sally: Booleans, (mathematical) Integers, and

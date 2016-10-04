@@ -21,6 +21,7 @@ import Control.Arrow (second)
 import Data.Maybe (catMaybes, fromMaybe)
 import Data.Sequence ((|>))
 import qualified Data.Sequence as Seq
+import Data.List ((\\))
 import qualified Data.Text.Lazy as T
 import System.Exit
 
@@ -71,7 +72,7 @@ translate _tconf name hier umap rules =
     tresState'    = trState name hier
     tresConsts'   =  []  -- TODO support defined constants
     tresInit'     = trInit name hier
-    tresTrans'    = trRules name umap rules
+    tresTrans'    = trRules name tresState' umap rules
     tresSystem'   = trSystem name
 
 -- | Translate types from Atom to Sally. Currently the unsigned int /
@@ -170,8 +171,8 @@ trSystem name = SallySystem (mkTSystemName name)
 -- transition system as a whole.
 --
 -- Note: Assertion and Coverage rules are ignored.
-trRules :: Name -> AUe.UeMap -> [AEla.Rule] -> [SallyTransition]
-trRules name umap rules = (catMaybes $ map trRule rules) ++ [master]
+trRules :: Name -> SallyState -> AUe.UeMap -> [AEla.Rule] -> [SallyTransition]
+trRules name st umap rules = (catMaybes $ map trRule rules) ++ [master]
   where trRule :: AEla.Rule -> Maybe SallyTransition
         trRule r@(AEla.Rule{}) = Just $ SallyTransition (mkTName r)
                                                         (mkStateTypeName name)
@@ -210,14 +211,24 @@ trRules name umap rules = (catMaybes $ map trRule rules) ++ [master]
           let ues = getUEs r
               lkErr h = "trRules: failed to lookup untyped expr " ++ show h
               lk h = fromMaybe (error $ lkErr h) $ lookup h ues
-              handleAssign (muv, h) = case muv of
-                AUe.MUV _ n _ ->
-                  let u = uglyHack n
-                  in SPEq (varExpr' (nextName . trName $ u)) (SEVar . lk $ h)
+
+              vName muv = case muv of
+                AUe.MUV _ n _    -> trName . uglyHack $ n
                 AUe.MUVArray{}   -> error "trRules: arrays are not supported"
                 AUe.MUVExtern{}  -> error "trRules: external vars are not supported"
                 AUe.MUVChannel{} -> error "trRules: Chan can't appear in lhs of assign"
+              handleAssign (muv, h) = SPEq (varExpr' (nextName . vName $ muv))
+                                           (SEVar . lk $ h)
+              handleLeftovers n = SPEq (varExpr' (nextName n))
+                                       (varExpr' (stateName n))
+              -- all state variables
+              stVars = map fst (sVars st)
+              -- state vars in this rule
+              stVarsUsed = map (vName . fst) $ AEla.ruleAssigns r
+              leftovers = stVars \\ stVarsUsed
               ops = map handleAssign (AEla.ruleAssigns r)
+                 ++ map handleLeftovers leftovers
+
           in simplifyAnds $ SPAnd (Seq.fromList ops)
           -- TODO Important! add next. = state. for all other state vars, i.e.
           --      the ones which are not involved in an assignment
@@ -237,7 +248,8 @@ trUExpr umap ues h =
     AUe.MUVRef (AUe.MUV _ k _) -> varExpr' . stateName . trName . uglyHack $ k
     AUe.MUVRef (AUe.MUVArray _ _)  -> aLangErr "arrays"
     AUe.MUVRef (AUe.MUVExtern k _) -> aLangErr $ "external variable " ++ k
-    AUe.MUVRef (AUe.MUVChannel _ k _) -> varExpr' (fst . mkChanStateNames $ trName k)
+    AUe.MUVRef (AUe.MUVChannel _ k _) -> varExpr' . stateName . fst
+                                       . mkChanStateNames . trName . uglyHack $ k
     AUe.MUCast _ _     -> aLangErr "casting"
     AUe.MUConst x      -> SELit (trConst x)
     AUe.MUAdd _ _      -> addExpr a b
