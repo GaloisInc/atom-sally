@@ -41,19 +41,25 @@ atom2 = atom "atom2" $ do
 
 putHeader = putStrLn (replicate 72 '-')
 
-testCompile :: String -> Atom () -> IO ()
-testCompile nm atom' = do
+testCompile :: (String, Atom (), String) -> IO ()
+testCompile (nm, atom', q) = do
   tr <- compile (nameFromS nm) TrConfig atom'
   let fname = testDir </> nm ++ ".mcmt"
-  withFile fname WriteMode (hPutSystem tr)
+  withFile fname WriteMode $ \h -> do
+    hPutSystem tr h
+    hPutStrLn h "\n;; Query"
+    hPutStrLn h q
   putStrLn ("compiled " ++ fname)
 
--- | List of 'Atom's to translate and print
-suite :: [(String, Atom ())]
-suite = [ ("test_atom1", atom1)
-        , ("test_atom2", atom2)
-        ]
+-- | List of (Name, Atom, Query) to translate and print
+suite :: [(String, Atom (), String)]
+suite =
+  [ ("A1", atom1,
+        "(query A1_transition_system (<= 0 A1!atom1!x))")
+  , ("A2", atom2,
+        "(query A2_transition_system (=> A2!atom2!alice!a A2!atom2!flag))")
+  ]
 
 main :: IO ()
 main = do
-  mapM_ (uncurry testCompile) suite
+  mapM_ testCompile suite

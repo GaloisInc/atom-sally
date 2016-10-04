@@ -51,6 +51,7 @@ module Language.Sally.Types (
   , varExpr
   , varExpr'
   , simplifyAnds
+  , simplifyOrs
 ) where
 
 import Data.Foldable (toList)
@@ -254,7 +255,7 @@ orExprs :: [SallyExpr] -> SallyExpr
 orExprs es = SEPre $ orPreds (fmap getPred es)
 
 orPreds :: [SallyPred] -> SallyPred
-orPreds = SPOr . Seq.fromList
+orPreds = SPOr . flattenOrs . Seq.fromList
 
 varExpr :: SallyVar -> SallyExpr
 varExpr = SEVar
@@ -276,6 +277,14 @@ flattenAnds (viewl -> xs) =
         -- SPConst False -> a <| Seq.empty
         _ -> a <| flattenAnds rest
 
+flattenOrs :: Seq SallyPred -> Seq SallyPred
+flattenOrs (viewl -> EmptyL) = Seq.empty
+flattenOrs (viewl -> a :< rest) =
+  case a of
+    SPOr ys -> flattenOrs ys >< flattenOrs rest
+    _ -> a <| flattenOrs rest
+flattenOrs _ = undefined  -- make compiler happy :)
+
 -- | Top-down rewriting of 'and' terms
 simplifyAnds :: SallyPred -> SallyPred
 simplifyAnds p =
@@ -293,6 +302,25 @@ simplifyAnds p =
     SPOr    xs  -> SPOr (fmap simplifyAnds xs)
     SPImpl  x y -> SPImpl (simplifyAnds x) (simplifyAnds y)
     SPNot   x   -> SPNot (simplifyAnds x)
+    _           -> p  -- TODO simplify arithmetic predicates?
+
+-- | Top-down rewriting of 'or' terms
+simplifyOrs :: SallyPred -> SallyPred
+simplifyOrs p =
+  case p of
+    -- main case
+    SPOr xs ->
+      let ys = flattenOrs (fmap simplifyOrs xs)
+      in case viewl ys of
+           EmptyL  -> SPConst False          -- empty disjunction
+           z :< zs -> if Seq.null zs then z  -- single term
+                      else SPOr ys           -- multiple terms
+    SPExpr (SEPre q) -> simplifyOrs q        -- strip off SPExpr . SEPre
+    -- other cases
+    SPConst _   -> p
+    SPAnd   xs  -> SPAnd (fmap simplifyOrs xs)
+    SPImpl  x y -> SPImpl (simplifyOrs x) (simplifyOrs y)
+    SPNot   x   -> SPNot (simplifyOrs x)
     _           -> p  -- TODO simplify arithmetic predicates?
 
 
@@ -363,7 +391,8 @@ instance ToSExp SallyTransition where
 
 -- | A transition system declaration
 data SallySystem = SallySystem
-  { sysSN  :: Name  -- ^ system state name
+  { sysNm  :: Name  -- ^ system name
+  , sysSN  :: Name  -- ^ system state name
   , sysISN :: Name  -- ^ system init state name
   , sysTN  :: Name  -- ^ system transition name
   }
@@ -371,6 +400,7 @@ data SallySystem = SallySystem
 
 instance ToSExp SallySystem where
     toSExp ss = SXList [ bareText "define-transition-system"
+                       , toSExp (sysNm ss)
                        , toSExp (sysSN ss)
                        , toSExp (sysISN ss)
                        , toSExp (sysTN ss)

@@ -160,7 +160,8 @@ trInit name sh = SallyStateFormula (mkInitStateName name)
 -- | Collect the state type name, initial states name, and master transition
 -- name into a 'SallySystem' record.
 trSystem :: Name -> SallySystem
-trSystem name = SallySystem (mkStateTypeName name)
+trSystem name = SallySystem (mkTSystemName name)
+                            (mkStateTypeName name)
                             (mkInitStateName name)
                             (mkMasterTransName name)
 
@@ -186,7 +187,7 @@ trRules name umap rules = (catMaybes $ map trRule rules) ++ [master]
                                  []
                                  (masterPred)
         minorTrans = map (SPExpr . SEVar . varFromName . mkTName) rules
-        masterPred = SPOr (Seq.fromList minorTrans)
+        masterPred = simplifyOrs $ SPOr (Seq.fromList minorTrans)
 
         mkTName :: AEla.Rule -> Name
         mkTName r@(AEla.Rule{}) = mkTransitionName (AEla.ruleId r) name
@@ -233,7 +234,7 @@ uglyHack = map dotToBang
 trUExpr :: AUe.UeMap -> [(AUe.Hash, SallyVar)] -> AUe.Hash -> SallyExpr
 trUExpr umap ues h =
   case AUe.getUE h umap of
-    AUe.MUVRef (AUe.MUV _ k _) -> varExpr' (trName k)  -- TODO is this the right name?
+    AUe.MUVRef (AUe.MUV _ k _) -> varExpr' . stateName . trName . uglyHack $ k
     AUe.MUVRef (AUe.MUVArray _ _)  -> aLangErr "arrays"
     AUe.MUVRef (AUe.MUVExtern k _) -> aLangErr $ "external variable " ++ k
     AUe.MUVRef (AUe.MUVChannel _ k _) -> varExpr' (fst . mkChanStateNames $ trName k)
@@ -314,6 +315,10 @@ mkTransitionName i name = name `scoreNames` "transition" `scoreNames`
 -- temp!0.
 trExprRef :: Int -> SallyVar
 trExprRef i = varFromName $ nameFromT "temp" `bangNames` nameFromS (show i)
+
+-- | name --> name_transition_system
+mkTSystemName :: Name -> Name
+mkTSystemName = (`scoreNames` "transition_system")
 
 -- Configuration ---------------------------------------------------------------
 
