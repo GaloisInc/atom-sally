@@ -20,7 +20,8 @@ flag develop
   Default: False
 
 library
-  exposed-modules:   Language.Sally.Types
+  exposed-modules:   Language.Sally
+                   , Language.Sally.Types
                    , Language.Sally.PPrint
                    , Language.Sally.Translation
                    , SExpPP

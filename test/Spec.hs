@@ -7,10 +7,7 @@ import System.FilePath.Posix
 import System.IO
 
 import Language.Atom hiding (compile)
-
-import Language.Sally.Types
-import Language.Sally.Translation
-import Language.Sally.PPrint
+import Language.Sally
 
 testDir :: FilePath
 testDir = "test"
