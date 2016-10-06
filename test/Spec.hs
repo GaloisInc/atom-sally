@@ -72,13 +72,9 @@ atom3 = atom "atom3" $ do
 putHeader = putStrLn (replicate 72 '-')
 
 testCompile :: (String, Atom (), String) -> IO ()
-testCompile (nm, atom', q) = do
-  tr <- compile (nameFromS nm) TrConfig atom'
+testCompile (nm, spec, q) = do
   let fname = testDir </> nm ++ ".mcmt"
-  withFile fname WriteMode $ \h -> do
-    hPutSystem tr h
-    hPutStrLn h "\n;; Query"
-    hPutStrLn h q
+  compileToSally nm TrConfig fname spec (Just q)
   putStrLn ("compiled " ++ fname)
 
 -- | List of (Name, Atom, Query) to translate and print

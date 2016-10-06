@@ -12,8 +12,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Language.Sally.Translation (
-    compile
-  , translate
+    translaborate
   , TrConfig(..)
 ) where
 
@@ -35,13 +34,13 @@ import Language.Sally.Types
 
 -- Entry Point from Atom -------------------------------------------------------
 
--- | Compiles an atom description to Sally. The 'TrResult' can then be printed
--- or written to disk.
-compile :: Name
+-- | Elaborate and translate an atom description to Sally. The 'TrResult' can
+-- then be printed or written to disk.
+translaborate :: Name
         -> TrConfig
         -> AEla.Atom ()
         -> IO (TrResult)
-compile name config atom' = do
+translaborate name config atom' = do
   let aname = T.unpack . textFromName $ name
   res <- AEla.elaborate AUe.emptyMap aname atom'
   case res of
