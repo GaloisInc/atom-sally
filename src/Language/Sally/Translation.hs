@@ -1,9 +1,9 @@
 -- |
 -- Module      :  Language.Sally.Translation
--- Copyright   :  Benjamin Jones 2016
+-- Copyright   :  Galois, Inc. 2016
 -- License     :  BSD3
 --
--- Maintainer  :  benjaminfjones@gmail.com
+-- Maintainer  :  bjones@galois.com
 -- Stability   :  experimental
 -- Portability :  unknown
 --
@@ -37,9 +37,9 @@ import Language.Sally.Types
 -- | Elaborate and translate an atom description to Sally. The 'TrResult' can
 -- then be printed or written to disk.
 translaborate :: Name
-        -> TrConfig
-        -> AEla.Atom ()
-        -> IO (TrResult)
+              -> TrConfig
+              -> AEla.Atom ()
+              -> IO (TrResult)
 translaborate name config atom' = do
   let aname = T.unpack . textFromName $ name
   res <- AEla.elaborate AUe.emptyMap aname atom'
@@ -60,7 +60,7 @@ translate :: TrConfig
           -> AUe.UeMap
           -> [AEla.Rule]
           -> TrResult
-translate _tconf name hier umap rules =
+translate conf name hier umap rules =
     TrResult { tresState  = tresState'
              , tresConsts = tresConsts'
              , tresInit   = tresInit'
@@ -68,11 +68,11 @@ translate _tconf name hier umap rules =
              , tresSystem = tresSystem'
              }
   where
-    tresState'    = trState name hier
+    tresState'    = trState  conf name hier
     tresConsts'   =  []  -- TODO support defined constants
-    tresInit'     = trInit name hier
-    tresTrans'    = trRules name tresState' umap rules
-    tresSystem'   = trSystem name
+    tresInit'     = trInit   conf name hier
+    tresTrans'    = trRules  conf name tresState' umap rules
+    tresSystem'   = trSystem conf name
 
 -- | Translate types from Atom to Sally. Currently the unsigned int /
 -- bitvector types are not supported.
@@ -115,8 +115,8 @@ trName :: AEla.Name -> Name
 trName = nameFromS
 
 -- | Produce a state type declaration from the 'StateHierarchy' in Atom.
-trState :: Name -> AEla.StateHierarchy -> SallyState
-trState name sh = SallyState (mkStateTypeName name) vars invars
+trState :: TrConfig -> Name -> AEla.StateHierarchy -> SallyState
+trState _conf name sh = SallyState (mkStateTypeName name) vars invars
   where
     invars = []  -- TODO expose input variables to DSL
     vars = if AEla.isHierarchyEmpty sh then []
@@ -137,8 +137,8 @@ bangPrefix :: Maybe Name -> Name -> Name
 bangPrefix mn n = maybe n (`bangNames` n) mn
 
 -- | Produce a predicate describing the initial state of the system.
-trInit :: Name -> AEla.StateHierarchy -> SallyStateFormula
-trInit name sh = SallyStateFormula (mkInitStateName name)
+trInit :: TrConfig -> Name -> AEla.StateHierarchy -> SallyStateFormula
+trInit _conf name sh = SallyStateFormula (mkInitStateName name)
                                    (mkStateTypeName name)
                                    spred
   where
@@ -159,19 +159,24 @@ trInit name sh = SallyStateFormula (mkInitStateName name)
 
 -- | Collect the state type name, initial states name, and master transition
 -- name into a 'SallySystem' record.
-trSystem :: Name -> SallySystem
-trSystem name = SallySystem (mkTSystemName name)
-                            (mkStateTypeName name)
-                            (mkInitStateName name)
-                            (mkMasterTransName name)
+trSystem :: TrConfig -> Name -> SallySystem
+trSystem _conf name = SallySystem (mkTSystemName name)
+                                  (mkStateTypeName name)
+                                  (mkInitStateName name)
+                                  (mkMasterTransName name)
 
 -- | Translate Atom 'Rule's into 'SallyTransition's. One transition is
 -- produced per rule, plus one master transition for use in defining the
 -- transition system as a whole.
 --
 -- Note: Assertion and Coverage rules are ignored.
-trRules :: Name -> SallyState -> AUe.UeMap -> [AEla.Rule] -> [SallyTransition]
-trRules name st umap rules = (catMaybes $ map trRule rules) ++ [master]
+trRules :: TrConfig
+        -> Name
+        -> SallyState
+        -> AUe.UeMap
+        -> [AEla.Rule]
+        -> [SallyTransition]
+trRules _conf name st umap rules = (catMaybes $ map trRule rules) ++ [master]
   where trRule :: AEla.Rule -> Maybe SallyTransition
         trRule r@(AEla.Rule{}) = Just $ SallyTransition (mkTName r)
                                                         (mkStateTypeName name)
