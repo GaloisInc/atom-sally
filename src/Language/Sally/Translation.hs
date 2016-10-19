@@ -29,6 +29,7 @@ import qualified Language.Atom.Elaboration as AEla
 import qualified Language.Atom.Expressions as AExp
 import qualified Language.Atom.UeMap       as AUe
 
+import Language.Sally.Config
 import Language.Sally.Types
 
 
@@ -335,8 +336,3 @@ trExprRef i = varFromName $ nameFromT "temp" `bangNames` nameFromS (show i)
 -- | name --> name_transition_system
 mkTSystemName :: Name -> Name
 mkTSystemName = (`scoreNames` "transition_system")
-
--- Configuration ---------------------------------------------------------------
-
--- | TODO define TrConfig
-data TrConfig = TrConfig
