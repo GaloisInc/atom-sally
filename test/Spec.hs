@@ -74,7 +74,8 @@ putHeader = putStrLn (replicate 72 '-')
 testCompile :: (String, Atom (), String) -> IO ()
 testCompile (nm, spec, q) = do
   let fname = testDir </> nm ++ ".mcmt"
-  compileToSally nm TrConfig fname spec (Just q)
+  let cfg = defaultCfg
+  compileToSally nm cfg fname spec (Just q)
   putStrLn ("compiled " ++ fname)
 
 -- | List of (Name, Atom, Query) to translate and print

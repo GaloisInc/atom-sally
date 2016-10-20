@@ -17,7 +17,10 @@ module Language.Sally (
   , putSystemLn
     -- * Language.Sally.Translation
   , translaborate
+    -- * Language.Sally.Config
   , TrConfig(..)
+  , FaultAssump(..)
+  , defaultCfg
     -- * Language.Sally.Types
   , nameFromS
   , nameFromT
@@ -26,9 +29,10 @@ module Language.Sally (
 import System.IO
 import Language.Atom
 
-import Language.Sally.Types
-import Language.Sally.Translation
+import Language.Sally.Config
 import Language.Sally.PPrint
+import Language.Sally.Translation
+import Language.Sally.Types
 
 
 -- | Compile an Atom specification to Sally model.
