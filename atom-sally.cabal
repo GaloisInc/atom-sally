@@ -22,9 +22,10 @@ flag develop
 
 library
   exposed-modules:   Language.Sally
-                   , Language.Sally.Types
+                   , Language.Sally.Config
                    , Language.Sally.PPrint
                    , Language.Sally.Translation
+                   , Language.Sally.Types
                    , SExpPP
 
   build-depends:       base           >=4.8 && <4.10
