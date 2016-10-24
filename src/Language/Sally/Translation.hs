@@ -62,15 +62,15 @@ translate :: TrConfig
           -> [AEla.Rule]
           -> TrResult
 translate conf name hier umap rules =
-    TrResult { tresState  = tresState'
-             , tresConsts = tresConsts'
-             , tresInit   = tresInit'
-             , tresTrans  = tresTrans'
-             , tresSystem = tresSystem'
-             }
+  TrResult { tresConsts = tresConsts'
+           , tresState  = tresState'
+           , tresInit   = tresInit'
+           , tresTrans  = tresTrans'
+           , tresSystem = tresSystem'
+           }
   where
-    tresState'    = trState  conf name hier
-    tresConsts'   =  []  -- TODO support defined constants
+    tresConsts'   = []  -- TODO support defined constants
+    tresState'    = trState  conf name hier rules
     tresInit'     = trInit   conf name hier
     tresTrans'    = trRules  conf name tresState' umap rules
     tresSystem'   = trSystem conf name
@@ -86,11 +86,10 @@ trType t = case t of
              AExp.Int64  -> SInt
              AExp.Float  -> SReal
              AExp.Double -> SReal
-             AExp.Word8  -> errWordN
-             AExp.Word16 -> errWordN
-             AExp.Word32 -> errWordN
-             AExp.Word64 -> errWordN
-  where errWordN = error "atom-sally does not support Word8 types"
+             AExp.Word8  -> SInt
+             AExp.Word16 -> SInt
+             AExp.Word32 -> SInt
+             AExp.Word64 -> SInt
 
 trTypeConst :: AExp.Const -> SallyBaseType
 trTypeConst = trType . AExp.typeOf
@@ -101,10 +100,10 @@ trConst (AExp.CInt8   x) = SConstInt  (fromIntegral x)
 trConst (AExp.CInt16  x) = SConstInt  (fromIntegral x)
 trConst (AExp.CInt32  x) = SConstInt  (fromIntegral x)
 trConst (AExp.CInt64  x) = SConstInt  (fromIntegral x)
-trConst (AExp.CWord8  _) = error "trConst: WordN is not supported"
-trConst (AExp.CWord16 _) = error "trConst: WordN is not supported"
-trConst (AExp.CWord32 _) = error "trConst: WordN is not supported"
-trConst (AExp.CWord64 _) = error "trConst: WordN is not supported"
+trConst (AExp.CWord8  x) = SConstInt  (fromIntegral x)
+trConst (AExp.CWord16 x) = SConstInt  (fromIntegral x)
+trConst (AExp.CWord32 x) = SConstInt  (fromIntegral x)
+trConst (AExp.CWord64 x) = SConstInt  (fromIntegral x)
 trConst (AExp.CFloat  x) = SConstReal (toRational x)
 trConst (AExp.CDouble x) = SConstReal (toRational x)
 
@@ -116,12 +115,23 @@ trName :: AEla.Name -> Name
 trName = nameFromS
 
 -- | Produce a state type declaration from the 'StateHierarchy' in Atom.
-trState :: TrConfig -> Name -> AEla.StateHierarchy -> SallyState
-trState _conf name sh = SallyState (mkStateTypeName name) vars invars
+trState :: TrConfig
+        -> Name
+        -> AEla.StateHierarchy
+        -> [AEla.Rule]
+        -> SallyState
+trState conf name sh rules = SallyState (mkStateTypeName name) vars invars
   where
-    invars = []  -- TODO expose input variables to DSL
+    invars = synthInvars  -- TODO expose input variables to DSL
     vars = if AEla.isHierarchyEmpty sh then []
-           else go Nothing sh
+           else go0 sh
+
+    -- special call for first level of StateHierarchy
+    go0 :: AEla.StateHierarchy -> [(Name, SallyBaseType)]
+    go0 (AEla.StateHierarchy nm items) =
+      let prefix0 = if cfgTopNameSpace conf then Just (trName nm) else Nothing
+      in concatMap (go (Just $ prefix0 `bangPrefix` (trName nm))) items
+    go0 sh0 = go Nothing sh0
 
     -- TODO (Maybe Name) for prefix is a little awkward here
     go :: Maybe Name -> AEla.StateHierarchy -> [(Name, SallyBaseType)]
@@ -134,18 +144,33 @@ trState _conf name sh = SallyState (mkStateTypeName name) vars invars
       in [(chanVar, trTypeConst c), (chanReady, SBool)]
     go _prefix (AEla.StateArray _ _) = error "atom-sally does not yet support arrays"
 
+    -- declare one boolean input variable per CHANNEL
+    synthInvars :: [(Name, SallyBaseType)]
+    synthInvars = [ (mkTransitionName (AEla.ruleId r) name, SBool)
+                  | r@(AEla.Rule{}) <- rules ]
+
 bangPrefix :: Maybe Name -> Name -> Name
 bangPrefix mn n = maybe n (`bangNames` n) mn
 
 -- | Produce a predicate describing the initial state of the system.
 trInit :: TrConfig -> Name -> AEla.StateHierarchy -> SallyStateFormula
-trInit _conf name sh = SallyStateFormula (mkInitStateName name)
-                                   (mkStateTypeName name)
-                                   spred
+trInit conf name sh = SallyStateFormula (mkInitStateName name)
+                                        (mkStateTypeName name)
+                                        spred
   where
     spred = simplifyAnds $ if AEla.isHierarchyEmpty sh then (SPConst True)
-                           else go Nothing sh
+                           else go0 sh
 
+    -- special call for first level of StateHierarchy
+    go0 :: AEla.StateHierarchy -> SallyPred
+    go0 (AEla.StateHierarchy nm items) =
+      let prefix0 = if cfgTopNameSpace conf then Just (trName nm) else Nothing
+      in SPAnd ( Seq.fromList
+               . map (go (Just $ prefix0 `bangPrefix` (trName nm)))
+               $ items)
+    go0 sh0 = go Nothing sh0
+
+    -- general level call
     go :: Maybe Name -> AEla.StateHierarchy -> SallyPred
     go prefix (AEla.StateHierarchy nm items) =
       SPAnd (Seq.fromList $ map (go (Just $ prefix `bangPrefix` (trName nm))) items)
