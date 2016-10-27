@@ -38,6 +38,7 @@ atom2 = atom "atom2" $ do
     f <== Const True
 
 type MsgType = Int64
+msgType = Int64  -- Atom 'Type' value
 
 -- | Two Atoms communicate through a *channel*
 --   Property: G((/= atom3!bob!msg -1) => atom3!alice!done)
@@ -46,24 +47,22 @@ atom3 :: Atom()
 atom3 = atom "atom3" $ do
 
   let
-    -- | Special message value indicating "no message present"
-    missingMsgValue :: MsgType
-    missingMsgValue = (-1)
+    -- | Special message values indicating "no message present", and "correct
+    -- (intended) message"
+    missingMsgValue, goodMsgValue  :: MsgType
+    missingMsgValue = -1
+    goodMsgValue    = 1
 
-    -- | Special message value indicating "correct (intended) message"
-    goodMsg :: E MsgType
-    goodMsg = Const 1
-
-  (cin, cout) <- channel "aTob" missingMsgValue
+  (cin, cout) <- channel "aTob" msgType
 
   atom "alice" $ do
     done <- bool "done" False
-    writeChannel cin goodMsg
+    writeChannel cin (Const goodMsgValue)
     done <== Const True
 
   atom "bob" $ do
     msg <- int64 "msg" missingMsgValue
-    condChannel cout
+    cond $ fullChannel cout
     msg <== readChannel cout
 
 

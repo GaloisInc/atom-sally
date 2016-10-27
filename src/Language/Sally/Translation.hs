@@ -24,6 +24,7 @@ import Data.List ((\\))
 import qualified Data.Text.Lazy as T
 import System.Exit
 
+import qualified Language.Atom.Types as ATyp
 import qualified Language.Atom.Analysis    as AAna
 import qualified Language.Atom.Elaboration as AEla
 import qualified Language.Atom.Expressions as AExp
@@ -32,6 +33,7 @@ import qualified Language.Atom.UeMap       as AUe
 import Language.Sally.Config
 import Language.Sally.Types
 
+import Debug.Trace
 
 -- Entry Point from Atom -------------------------------------------------------
 
@@ -48,8 +50,8 @@ translaborate name config atom' = do
    Nothing -> do
      putStrLn "ERROR: Design rule checks failed."
      exitWith (ExitFailure 1)
-   Just (umap, (state, rules, _assertionNames, _coverageNames, _probeNames)) -> do
-     return (translate config name state umap rules)
+   Just (umap, (state, rules, chans, _ass, _cov, _prob)) ->
+     return (translate config name state umap rules chans)
 
 
 -- Main Translation Code -------------------------------------------------------
@@ -60,8 +62,9 @@ translate :: TrConfig
           -> AEla.StateHierarchy
           -> AUe.UeMap
           -> [AEla.Rule]
+          -> [AEla.ChanInfo]
           -> TrResult
-translate conf name hier umap rules =
+translate conf name hier umap rules chans =
   TrResult { tresConsts = tresConsts'
            , tresState  = tresState'
            , tresInit   = tresInit'
@@ -70,7 +73,7 @@ translate conf name hier umap rules =
            }
   where
     tresConsts'   = []  -- TODO support defined constants
-    tresState'    = trState  conf name hier rules
+    tresState'    = trState  conf name hier rules chans
     tresInit'     = trInit   conf name hier
     tresTrans'    = trRules  conf name tresState' umap rules
     tresSystem'   = trSystem conf name
@@ -79,17 +82,17 @@ translate conf name hier umap rules =
 -- bitvector types are not supported.
 trType :: AExp.Type -> SallyBaseType
 trType t = case t of
-             AExp.Bool   -> SBool
-             AExp.Int8   -> SInt
-             AExp.Int16  -> SInt
-             AExp.Int32  -> SInt
-             AExp.Int64  -> SInt
-             AExp.Float  -> SReal
-             AExp.Double -> SReal
-             AExp.Word8  -> SInt
-             AExp.Word16 -> SInt
-             AExp.Word32 -> SInt
-             AExp.Word64 -> SInt
+  AExp.Bool   -> SBool
+  AExp.Int8   -> SInt
+  AExp.Int16  -> SInt
+  AExp.Int32  -> SInt
+  AExp.Int64  -> SInt
+  AExp.Float  -> SReal
+  AExp.Double -> SReal
+  AExp.Word8  -> SInt
+  AExp.Word16 -> SInt
+  AExp.Word32 -> SInt
+  AExp.Word64 -> SInt
 
 trTypeConst :: AExp.Const -> SallyBaseType
 trTypeConst = trType . AExp.typeOf
@@ -107,11 +110,26 @@ trConst (AExp.CWord64 x) = SConstInt  (fromIntegral x)
 trConst (AExp.CFloat  x) = SConstReal (toRational x)
 trConst (AExp.CDouble x) = SConstReal (toRational x)
 
-
 trConstE :: AExp.Const -> SallyExpr
 trConstE = SELit . trConst
 
-trName :: AEla.Name -> Name
+-- | Define the default value to initialize variables of the given expression
+-- type to.
+trInitForType :: AExp.Type -> SallyExpr
+trInitForType t = SELit $ case t of
+  AExp.Bool   -> SConstBool False
+  AExp.Int8   -> SConstInt 0
+  AExp.Int16  -> SConstInt 0
+  AExp.Int32  -> SConstInt 0
+  AExp.Int64  -> SConstInt 0
+  AExp.Word8  -> SConstInt 0
+  AExp.Word16 -> SConstInt 0
+  AExp.Word32 -> SConstInt 0
+  AExp.Word64 -> SConstInt 0
+  AExp.Float  -> SConstReal 0
+  AExp.Double -> SConstReal 0
+
+trName :: ATyp.Name -> Name
 trName = nameFromS
 
 -- | Produce a state type declaration from the 'StateHierarchy' in Atom.
@@ -119,19 +137,13 @@ trState :: TrConfig
         -> Name
         -> AEla.StateHierarchy
         -> [AEla.Rule]
+        -> [AEla.ChanInfo]
         -> SallyState
-trState conf name sh rules = SallyState (mkStateTypeName name) vars invars
+trState _conf name sh rules chans = SallyState (mkStateTypeName name) vars invars
   where
     invars = synthInvars  -- TODO expose input variables to DSL
     vars = if AEla.isHierarchyEmpty sh then []
-           else go0 sh
-
-    -- special call for first level of StateHierarchy
-    go0 :: AEla.StateHierarchy -> [(Name, SallyBaseType)]
-    go0 (AEla.StateHierarchy nm items) =
-      let prefix0 = if cfgTopNameSpace conf then Just (trName nm) else Nothing
-      in concatMap (go (Just $ prefix0 `bangPrefix` (trName nm))) items
-    go0 sh0 = go Nothing sh0
+           else go Nothing sh
 
     -- TODO (Maybe Name) for prefix is a little awkward here
     go :: Maybe Name -> AEla.StateHierarchy -> [(Name, SallyBaseType)]
@@ -139,36 +151,35 @@ trState conf name sh rules = SallyState (mkStateTypeName name) vars invars
       concatMap (go (Just $ prefix `bangPrefix` (trName nm))) items
     go prefix (AEla.StateVariable nm c) =
       [(prefix `bangPrefix` (trName nm), trTypeConst c)]
-    go prefix (AEla.StateChannel nm c _) =
+    go prefix (AEla.StateChannel nm t) =
       let (chanVar, chanReady) = mkChanStateNames (prefix `bangPrefix` (trName nm))
-      in [(chanVar, trTypeConst c), (chanReady, SBool)]
+      in [(chanVar, trType t), (chanReady, SBool)]
     go _prefix (AEla.StateArray _ _) = error "atom-sally does not yet support arrays"
 
-    -- declare one boolean input variable per CHANNEL
     synthInvars :: [(Name, SallyBaseType)]
-    synthInvars = [ (mkTransitionName (AEla.ruleId r) name, SBool)
-                  | r@(AEla.Rule{}) <- rules ]
+    synthInvars =
+      -- declare one boolean input variable per CHANNEL, used to provide
+      -- non-deterministic values on faulty channels
+         trace (show name ++ ": " ++ show (length chans) ++ " chans") $  -- XXX
+         [ (mkFaultChanValueName (AEla.cinfoId  c)
+                                 (trName . uglyHack . AEla.cinfoName $ c), SBool)
+         | c <- chans ]
+      -- declare one boolean input variable per NODE, these are latched at the
+      -- start of the trace and determine which nodes are faulty
+      ++ [ (mkFaultNodeName (AEla.ruleId r) name, SBool)
+         | r@(AEla.Rule{}) <- rules ]
 
 bangPrefix :: Maybe Name -> Name -> Name
 bangPrefix mn n = maybe n (`bangNames` n) mn
 
 -- | Produce a predicate describing the initial state of the system.
 trInit :: TrConfig -> Name -> AEla.StateHierarchy -> SallyStateFormula
-trInit conf name sh = SallyStateFormula (mkInitStateName name)
+trInit _conf name sh = SallyStateFormula (mkInitStateName name)
                                         (mkStateTypeName name)
                                         spred
   where
     spred = simplifyAnds $ if AEla.isHierarchyEmpty sh then (SPConst True)
-                           else go0 sh
-
-    -- special call for first level of StateHierarchy
-    go0 :: AEla.StateHierarchy -> SallyPred
-    go0 (AEla.StateHierarchy nm items) =
-      let prefix0 = if cfgTopNameSpace conf then Just (trName nm) else Nothing
-      in SPAnd ( Seq.fromList
-               . map (go (Just $ prefix0 `bangPrefix` (trName nm)))
-               $ items)
-    go0 sh0 = go Nothing sh0
+                           else go Nothing sh
 
     -- general level call
     go :: Maybe Name -> AEla.StateHierarchy -> SallyPred
@@ -176,11 +187,11 @@ trInit conf name sh = SallyStateFormula (mkInitStateName name)
       SPAnd (Seq.fromList $ map (go (Just $ prefix `bangPrefix` (trName nm))) items)
     go prefix (AEla.StateVariable nm c) =
       SPEq (varExpr' (prefix `bangPrefix` (trName nm))) (trConstE c)
-    go prefix (AEla.StateChannel nm c b) =
+    go prefix (AEla.StateChannel nm t) =
       let (chanVar, chanReady) = mkChanStateNames (prefix `bangPrefix` (trName nm))
       in SPAnd (  Seq.empty
-               |> SPEq (varExpr' chanVar) (trConstE c)
-               |> SPEq (varExpr' chanReady) (trConstE b))
+               |> SPEq (varExpr' chanVar) (trInitForType t)
+               |> SPEq (varExpr' chanReady) (trInitForType AExp.Bool))
     go _prefix (AEla.StateArray _ _) = error "atom-sally does not yet support arrays"
 
 -- | Collect the state type name, initial states name, and master transition
@@ -247,6 +258,8 @@ trRules _conf name st umap rules = (catMaybes $ map trRule rules) ++ [master]
                 AUe.MUVArray{}   -> error "trRules: arrays are not supported"
                 AUe.MUVExtern{}  -> error "trRules: external vars are not supported"
                 AUe.MUVChannel{} -> error "trRules: Chan can't appear in lhs of assign"
+                AUe.MUVChannelReady{} ->
+                  error "trRules: Chan can't appear in lhs of assign"
               handleAssign (muv, h) = SPEq (varExpr' (nextName . vName $ muv))
                                            (SEVar . lk $ h)
               handleLeftovers n = SPEq (varExpr' (nextName n))
@@ -278,8 +291,10 @@ trUExpr umap ues h =
     AUe.MUVRef (AUe.MUV _ k _) -> varExpr' . stateName . trName . uglyHack $ k
     AUe.MUVRef (AUe.MUVArray _ _)  -> aLangErr "arrays"
     AUe.MUVRef (AUe.MUVExtern k _) -> aLangErr $ "external variable " ++ k
-    AUe.MUVRef (AUe.MUVChannel _ k _) -> varExpr' . stateName . fst
-                                       . mkChanStateNames . trName . uglyHack $ k
+    AUe.MUVRef (AUe.MUVChannel _ k _) ->
+      varExpr' . stateName . fst . mkChanStateNames . trName . uglyHack $ k
+    AUe.MUVRef (AUe.MUVChannelReady _ k) ->
+      varExpr' . stateName . snd . mkChanStateNames . trName . uglyHack $ k
     AUe.MUCast _ _     -> aLangErr "casting"
     AUe.MUConst x      -> SELit (trConst x)
     AUe.MUAdd _ _      -> addExpr a b
@@ -330,31 +345,41 @@ trUExpr umap ues h =
 
 -- Name Generation Utilities ---------------------------------------------------
 
--- | name --> name_state_type
+-- | name --> @name_state_type@
 mkStateTypeName :: Name -> Name
 mkStateTypeName = (`scoreNames` "state_type")
 
--- | name --> name_initial_state
+-- | name --> @name_initial_state@
 mkInitStateName :: Name -> Name
 mkInitStateName = (`scoreNames` "initial_state")
 
--- | name --> name_transition
+-- | name --> @name_transition@
 mkMasterTransName :: Name -> Name
 mkMasterTransName = (`scoreNames` "transition")
 
--- | name --> (name!var, name!ready)
+-- | name --> (@name!var@, @name!ready@)
 mkChanStateNames :: Name -> (Name, Name)
 mkChanStateNames name = (chanVar, chanReady)
   where chanVar   = name `bangNames` "var"
         chanReady = name `bangNames` "ready"
 
--- | i name --> name_transition_i
+-- | i name --> @name_transition_i@
 mkTransitionName :: Int -> Name -> Name
 mkTransitionName i name = name `scoreNames` "transition" `scoreNames`
                           nameFromS (show i)
 
+-- | i cname aname --> @aname_transition_fault_value_cname_i@
+mkFaultChanValueName :: Int -> Name -> Name
+mkFaultChanValueName i cnm =
+  cnm `bangNames` "fault_value" `bangNames` nameFromS (show i)
+
+-- | i name --> @name_transition_fault_node_i@
+mkFaultNodeName :: Int -> Name -> Name
+mkFaultNodeName i nm =
+  nm `bangNames` "faulty_node" `bangNames` nameFromS (show i)
+
 -- | Translate a shared expression reference (an Int) to a variable, e.g.
--- temp!0.
+-- @temp!0@.
 trExprRef :: Int -> SallyVar
 trExprRef i = varFromName $ nameFromT "temp" `bangNames` nameFromS (show i)
 

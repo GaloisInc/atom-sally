@@ -22,16 +22,21 @@ data TrConfig = TrConfig
   { -- | maximum fault assumption
     cfgMFA :: FaultAssump    -- ^ fault model to use
   , cfgTopNameSpace :: Bool  -- ^ use top-level name space in variables names?
+                             -- TODO this doesn't work currently because of
+                             -- the way Atom generates names during
+                             -- 'elaborate'
   }
 
 defaultCfg :: TrConfig
-defaultCfg = TrConfig { cfgMFA = NoFaults
-                      , cfgTopNameSpace = True
-                      }
+defaultCfg = TrConfig
+  { cfgMFA = NoFaults
+  , cfgTopNameSpace = True
+  }
 
 data FaultAssump = NoFaults    -- ^ no faulty nodes
                  | MaxByz Int  -- ^ maximum number of byz faulty nodes
                                --   changing on a trace-by-trace basis
+
               -- Future fault model possibilities:
               --
               -- | MaxHybrid Int  -- weight of byzantine
