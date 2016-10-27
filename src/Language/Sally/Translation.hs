@@ -33,7 +33,6 @@ import qualified Language.Atom.UeMap       as AUe
 import Language.Sally.Config
 import Language.Sally.Types
 
-import Debug.Trace
 
 -- Entry Point from Atom -------------------------------------------------------
 
@@ -160,7 +159,6 @@ trState _conf name sh rules chans = SallyState (mkStateTypeName name) vars invar
     synthInvars =
       -- declare one boolean input variable per CHANNEL, used to provide
       -- non-deterministic values on faulty channels
-         trace (show name ++ ": " ++ show (length chans) ++ " chans") $  -- XXX
          [ (mkFaultChanValueName (AEla.cinfoId  c)
                                  (trName . uglyHack . AEla.cinfoName $ c), SBool)
          | c <- chans ]
