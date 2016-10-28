@@ -16,22 +16,22 @@ module Language.Sally.Translation (
   , TrConfig(..)
 ) where
 
-import Control.Arrow (second)
-import Data.Maybe (catMaybes, fromMaybe)
-import Data.Sequence ((|>))
+import           Control.Arrow (second)
+import           Data.Maybe (catMaybes, fromMaybe)
+import           Data.Sequence ((|>))
 import qualified Data.Sequence as Seq
-import Data.List ((\\))
+import           Data.List ((\\))
 import qualified Data.Text.Lazy as T
-import System.Exit
+import           System.Exit
 
 import qualified Language.Atom.Types as ATyp
-import qualified Language.Atom.Analysis    as AAna
+import qualified Language.Atom.Analysis as AAna
 import qualified Language.Atom.Elaboration as AEla
 import qualified Language.Atom.Expressions as AExp
-import qualified Language.Atom.UeMap       as AUe
+import qualified Language.Atom.UeMap as AUe
 
-import Language.Sally.Config
-import Language.Sally.Types
+import           Language.Sally.Config
+import           Language.Sally.Types
 
 
 -- Entry Point from Atom -------------------------------------------------------
