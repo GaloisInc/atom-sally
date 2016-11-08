@@ -52,6 +52,6 @@ compileToSally nm config fname spec mQuery = do
     hPutSystem tr h
     case mQuery of
       Just q -> do
-        hPutStrLn h "\n;; Query"
+        hPutStrLn h "\n\n;; Query"
         hPutStrLn h q
       Nothing -> return ()
