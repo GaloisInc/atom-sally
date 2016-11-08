@@ -12,8 +12,11 @@ import Language.Sally
 testDir :: FilePath
 testDir = "test"
 
+type MsgType = Int64
+msgType = Int64  -- Atom 'Type' value
 
 -- Test Atoms -----------------------------------------------------------
+
 
 -- | 'x' starts at 0, increases each tick up to 10
 --   Property: G(atom1!x >= 0)
@@ -22,6 +25,7 @@ atom1 = atom "atom1" $ do
   x <- int8  "x" 0
   cond $ (value x) <. 10
   x <== (value x) + 1
+
 
 -- | Two Atoms communicate through a flag
 --   Property: G(atom2!alice!a => atom2!flag)
@@ -37,8 +41,6 @@ atom2 = atom "atom2" $ do
   atom "bob" $ do
     f <== Const True
 
-type MsgType = Int64
-msgType = Int64  -- Atom 'Type' value
 
 -- | Two Atoms communicate through a *channel*
 --   Property: G((/= atom3!bob!msg -1) => atom3!alice!done)
@@ -64,6 +66,7 @@ atom3 = atom "atom3" $ do
     msg <- int64 "msg" missingMsgValue
     cond $ fullChannel cout
     msg <== readChannel cout
+
 
 
 -- Main -----------------------------------------------------------------
