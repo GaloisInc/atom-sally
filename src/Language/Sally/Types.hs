@@ -55,6 +55,7 @@ module Language.Sally.Types (
 ) where
 
 import Data.Foldable (toList)
+import Data.List (intersperse)
 import Data.Sequence (Seq, (<|), (><), viewl, ViewL(..))
 import qualified Data.Sequence as Seq
 import Data.String
@@ -431,14 +432,16 @@ instance Pretty TrResult where
                    , init_comment
                    , sxPretty (tresInit tr)
                    ] <$$>
-              vcat (trans_comment : map sxPretty (tresTrans tr)) <$$>
+              vcat (trans_comment : intersperse
+                                      sallyCom
+                                      (map sxPretty (tresTrans tr))) <$$>
               vcat (system_comment : [sxPretty (tresSystem tr)])
     where
       consts = if null (tresConsts tr) then text ";; NONE"
                else vcat (map sxPretty (tresConsts tr))
-      consts_comment = text ";; Constants"
-      state_comment  = text "\n;; State type"
-      init_comment   = text "\n;; Initial State"
-      trans_comment  = text "\n;; Transitions"
-      system_comment = text "\n;; System Definition"
+      consts_comment = sallyCom <+> text "Constants"
+      state_comment  = linebreak <> sallyCom <+> text "State type"
+      init_comment   = linebreak <> sallyCom <+> text "Initial State"
+      trans_comment  = linebreak <> sallyCom <+> text "Transitions"
+      system_comment = linebreak <> sallyCom <+> text "System Definition"
 

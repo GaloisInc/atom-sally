@@ -10,6 +10,7 @@
 -- Exports a pretty printer for the result of translation.
 --
 module Language.Sally.PPrint (
+  -- * pretty printing
     pprintSystem
   , putSystem
   , putSystemLn
@@ -38,4 +39,3 @@ putSystemLn tr = putSystem tr >> putStrLn ""
 
 hPutSystem :: Handle -> TrResult -> IO ()
 hPutSystem h tr = BS.hPutStr h . E.encodeUtf8 . pprintSystem $ tr
--- hPutSystem tr h = hPutDoc h (pretty tr)

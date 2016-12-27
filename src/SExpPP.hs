@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 -- |
 -- Module      :  SExpPP
 -- Copyright   :  Benjamin F Jones 2016
@@ -12,17 +14,17 @@
 --
 
 module SExpPP (
+  -- * S-expression pretty printing
     SExp(..)
   , ToSExp(..)
   , bareText
+  -- * misc
+  , sallyCom
 ) where
 
 import Data.Text.Lazy (Text)
 import Text.PrettyPrint.Leijen.Text
 
-
--- hang' :: Doc -> Doc
--- hang' =  hang 2
 
 data SExp = SXBare Doc     -- ^ bare symbol or literal
           | SXList [SExp]  -- ^ (foo a b)
@@ -46,3 +48,9 @@ sxPrettyDefault (SXList xs) = parens . group . align . vsep . fmap sxPretty $ xs
 
 bareText :: Text -> SExp
 bareText = SXBare . text
+
+
+-- Misc Sally Specific Items ---------------------------------------------------
+
+sallyCom :: Doc
+sallyCom = text ";;"
