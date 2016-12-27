@@ -16,13 +16,16 @@ module Language.Sally.PPrint (
   , hPutSystem
 ) where
 
-import qualified Data.Text.Lazy as TL
+import qualified Data.Text.Lazy as L
+import qualified Data.Text.Lazy.Encoding as E
+import qualified Data.ByteString.Lazy.Char8 as BS
+
 import System.IO (Handle)
 import Text.PrettyPrint.Leijen.Text
 
 import Language.Sally.Types
 
-pprintSystem :: TrResult -> TL.Text
+pprintSystem :: TrResult -> L.Text
 pprintSystem = displayT . renderPretty ribbon wid . pretty
   where ribbon = 72 / 80 :: Float
         wid    = 80
@@ -33,5 +36,6 @@ putSystem = putDoc . pretty
 putSystemLn :: TrResult -> IO ()
 putSystemLn tr = putSystem tr >> putStrLn ""
 
-hPutSystem :: TrResult -> Handle -> IO ()
-hPutSystem tr h = hPutDoc h (pretty tr)
+hPutSystem :: Handle -> TrResult -> IO ()
+hPutSystem h tr = BS.hPutStr h . E.encodeUtf8 . pprintSystem $ tr
+-- hPutSystem tr h = hPutDoc h (pretty tr)

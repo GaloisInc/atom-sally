@@ -29,6 +29,7 @@ library
                    , SExpPP
 
   build-depends:       base           >=4.8 && <4.10
+                     , bytestring     >=0.10.6
                      , containers     >=0.5
                      , text           >=1.2
                      , wl-pprint-text >=1.1

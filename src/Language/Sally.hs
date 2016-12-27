@@ -49,7 +49,7 @@ compileToSally
 compileToSally nm config fname spec mQuery = do
   tr <- translaborate (nameFromS nm) config spec
   withFile fname WriteMode $ \h -> do
-    hPutSystem tr h
+    hPutSystem h tr
     case mQuery of
       Just q -> do
         hPutStrLn h "\n\n;; Query"
