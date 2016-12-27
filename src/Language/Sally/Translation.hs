@@ -132,6 +132,7 @@ trName :: ATyp.Name -> Name
 trName = nameFromS
 
 -- | Produce a state type declaration from the 'StateHierarchy' in Atom.
+-- Several 'input' variables are also synthesized here for the fault model.
 trState :: TrConfig
         -> Name
         -> AEla.StateHierarchy
@@ -144,6 +145,7 @@ trState _conf name sh rules chans = SallyState (mkStateTypeName name) vars invar
     vars = if AEla.isHierarchyEmpty sh then []
            else go Nothing sh
 
+    -- Recursive helper function to traverse the state hierarchy
     -- TODO (Maybe Name) for prefix is a little awkward here
     go :: Maybe Name -> AEla.StateHierarchy -> [(Name, SallyBaseType)]
     go prefix (AEla.StateHierarchy nm items) =
@@ -157,13 +159,15 @@ trState _conf name sh rules chans = SallyState (mkStateTypeName name) vars invar
 
     synthInvars :: [(Name, SallyBaseType)]
     synthInvars =
-      -- declare one boolean input variable per CHANNEL, used to provide
-      -- non-deterministic values on faulty channels
-         [ (mkFaultChanValueName (AEla.cinfoId  c)
-                                 (trName . uglyHack . AEla.cinfoName $ c), SBool)
+      -- Declare one (channel typed) input variable per CHANNEL, used to
+      -- provide non-deterministic values on faulty channels.
+         [ ( mkFaultChanValueName (AEla.cinfoId  c)
+                                  (trName . uglyHack . AEla.cinfoName $ c)
+           , trType (AEla.cinfoType c))
          | c <- chans ]
-      -- declare one boolean input variable per NODE, these are latched at the
-      -- start of the trace and determine which nodes are faulty
+      -- Declare one boolean input variable per NODE, these are latched into
+      -- corresponding state variables at the start of the trace and determine
+      -- which nodes are faulty.
       ++ [ (mkFaultNodeName (AEla.ruleId r) name, SBool)
          | r@(AEla.Rule{}) <- rules ]
 
