@@ -18,7 +18,7 @@ module Language.Sally.Translation (
 
 import           Control.Arrow (second)
 import           Data.Maybe (catMaybes, fromMaybe)
-import           Data.Sequence ((|>))
+import           Data.Sequence ((><), (|>))
 import qualified Data.Sequence as Seq
 import           Data.List ((\\))
 import qualified Data.Text.Lazy as T
@@ -31,6 +31,7 @@ import qualified Language.Atom.Expressions as AExp
 import qualified Language.Atom.UeMap as AUe
 
 import           Language.Sally.Config
+import           Language.Sally.FaultModel
 import           Language.Sally.Types
 
 
@@ -73,8 +74,8 @@ translate conf name hier umap rules chans =
   where
     tresConsts'   = []  -- TODO support defined constants
     tresState'    = trState  conf name hier rules chans
-    tresInit'     = trInit   conf name hier
-    tresTrans'    = trRules  conf name tresState' umap rules
+    tresInit'     = trInit   conf name hier rules
+    tresTrans'    = trRules  conf name tresState' umap chans rules
     tresSystem'   = trSystem conf name
 
 -- | Translate types from Atom to Sally. Currently the unsigned int /
@@ -167,11 +168,11 @@ trState _conf name sh rules chans = SallyState (mkStateTypeName name) vars invar
         , trType (AEla.cinfoType c))
       | c <- chans ]
 
-    -- Declare one boolean state variable per NODE, these are left
-    -- unconstrained in both the init block and the transition blocks so
-    -- they remain constant throughout a trace.
+    -- Declare one boolean state variable per NODE, these are partially
+    -- constrained in the init block so that they remain at a constant value
+    -- between 'fauiltTypeMin' and 'faultTypeMax' throughout a trace.
     faultStatusVars :: [(Name, SallyBaseType)]
-    faultStatusVars = [ (mkFaultNodeName (AEla.ruleId r), SBool)
+    faultStatusVars = [ (mkFaultNodeName (AEla.ruleId r), SInt)
                       | r@(AEla.Rule{}) <- rules ]
 
     clockVars :: [(Name, SallyBaseType)]
@@ -181,12 +182,15 @@ bangPrefix :: Maybe Name -> Name -> Name
 bangPrefix mn n = maybe n (`bangNames` n) mn
 
 -- | Produce a predicate describing the initial state of the system.
-trInit :: TrConfig -> Name -> AEla.StateHierarchy -> SallyStateFormula
-trInit _conf name sh = SallyStateFormula (mkInitStateName name)
-                                        (mkStateTypeName name)
-                                        spred
+trInit :: TrConfig -> Name -> AEla.StateHierarchy -> [AEla.Rule] -> SallyStateFormula
+trInit _conf name sh rules = SallyStateFormula (mkInitStateName name)
+                                               (mkStateTypeName name)
+                                               spred
   where
-    spred  = simplifyAnds $ SPAnd (Seq.fromList [nodeInit, clockInit])
+    spred  = simplifyAnds $ SPAnd (Seq.fromList [ nodeInit
+                                                , clockInit
+                                                , faultFlagConstraints
+                                                ])
 
     nodeInit = if AEla.isHierarchyEmpty sh then (SPConst True)
                                            else go Nothing sh
@@ -203,6 +207,17 @@ trInit _conf name sh = SallyStateFormula (mkInitStateName name)
     go _prefix (AEla.StateArray _ _) = error "atom-sally does not yet support arrays"
 
     clockInit = SPEq (varExpr' clockTimeName) initialTime
+
+    -- constrain node-fault type to values defined in "FaultModel"
+    -- In the generated Sally model, 0 = NonFaulty, 1 = ManifestFaulty, etc..
+    faultFlagConstraints =
+      SPAnd (   Seq.fromList [SPLEq faultTypeMin' f | f <- faultExprs]
+             >< Seq.fromList [SPLEq f faultTypeMax' | f <- faultExprs])
+    faultExprs = [ (varExpr' . mkFaultNodeName . AEla.ruleId $ r)
+                 | r@(AEla.Rule{}) <- rules ]
+    faultTypeMin' = intExpr faultTypeMin
+    faultTypeMax' = intExpr faultTypeMax
+
 
 -- | Collect the state type name, initial states name, and master transition
 -- name into a 'SallySystem' record.
@@ -221,9 +236,10 @@ trRules :: TrConfig
         -> Name
         -> SallyState
         -> AUe.UeMap
+        -> [AEla.ChanInfo]
         -> [AEla.Rule]
         -> [SallyTransition]
-trRules _conf name st umap rules = (catMaybes $ map trRule rules) ++ [master]
+trRules _conf name st umap chans rules = (catMaybes $ map trRule rules) ++ [master]
   where trRule :: AEla.Rule -> Maybe SallyTransition
         trRule r@(AEla.Rule{}) = Just $ SallyTransition (mkTName r)
                                                         (mkStateTypeName name)
@@ -254,7 +270,7 @@ trRules _conf name st umap rules = (catMaybes $ map trRule rules) ++ [master]
         mkLetBinds :: AEla.Rule -> [SallyLet]
         mkLetBinds r@(AEla.Rule{}) =
           let ues = getUEs r
-          in map (\(h, v) -> (v, trUExpr umap ues h)) ues
+          in map (\(h, v) -> (v, trUExpr umap chans ues h)) ues
         mkLetBinds _ = error "impossible! assert or coverage rule found in mkLetBinds"
 
         -- TODO Avoid the ugly name mangling hack here by having variables
@@ -266,6 +282,7 @@ trRules _conf name st umap rules = (catMaybes $ map trRule rules) ++ [master]
               lkErr h = "trRules: failed to lookup untyped expr " ++ show h
               lk h = fromMaybe (error $ lkErr h) $ lookup h ues
 
+              -- extract variabe name
               vName muv = case muv of
                 AUe.MUV _ n _    -> uglyHack n
                 AUe.MUVArray{}   -> error "trRules: arrays are not supported"
@@ -274,6 +291,9 @@ trRules _conf name st umap rules = (catMaybes $ map trRule rules) ++ [master]
                                          ++"of assign, use 'writeChannel' instead.")
                 AUe.MUVChannelReady{} ->
                   error "trRules: Chan can't appear in lhs of assign"
+
+              -- translate assignments into equality between state and next
+              -- vars
               handleAssign (muv, h) = SPEq (varExpr' (nextName . vName $ muv))
                                            (SEVar . lk $ h)
               handleLeftovers n = SPEq (varExpr' (nextName n))
@@ -282,13 +302,14 @@ trRules _conf name st umap rules = (catMaybes $ map trRule rules) ++ [master]
               stVars = map fst (sVars st)
               -- state vars in this rule
               stVarsUsed = map (vName . fst) $ AEla.ruleAssigns r
+
+              -- leftovers are vars not explicitly mentioned in the atom body,
+              -- we need to make sure they stutter using 'handleLeftovers'
               leftovers = stVars \\ stVarsUsed
               ops = map handleAssign (AEla.ruleAssigns r)
                  ++ map handleLeftovers leftovers
 
           in simplifyAnds $ SPAnd (Seq.fromList ops)
-          -- TODO Important! add next. = state. for all other state vars, i.e.
-          --      the ones which are not involved in an assignment
         mkPred _ = error "impossible! assert or coverage rule found in mkPred"
 
 -- | s/\./!/g
@@ -300,20 +321,17 @@ uglyHack = trName . map dotToBang
 -- Translate Expressions -------------------------------------------------------
 
 trUExpr :: AUe.UeMap               -- ^ untyped expression map
+        -> [AEla.ChanInfo]         -- ^ channel meta-data for all channels in system
         -> [(AUe.Hash, SallyVar)]  -- ^ pre-translated arguments to the expression head
         -> AUe.Hash                -- ^ hash of expression head
         -> SallyExpr
-trUExpr umap ues h =
+trUExpr umap chans ues h =
   case AUe.getUE h umap of
     AUe.MUVRef (AUe.MUV _ k _)     -> varExpr' . stateName . uglyHack $ k
     AUe.MUVRef (AUe.MUVArray _ _)  -> aLangErr "arrays"
     AUe.MUVRef (AUe.MUVExtern k _) -> aLangErr $ "external variable " ++ k
-    AUe.MUVRef (AUe.MUVChannel _ k _) ->
-      -- XXX trap access to channel, adding check for faults
-      varExpr' . stateName . fst . mkChanStateNames . uglyHack $ k
-    AUe.MUVRef (AUe.MUVChannelReady _ k) ->
-      -- XXX translate the Channel Ready? question into a chanTime question?
-      varExpr' . stateName . snd . mkChanStateNames . uglyHack $ k
+    AUe.MUVRef (AUe.MUVChannel _ k _)    -> mkFaultCheck chans k
+    AUe.MUVRef (AUe.MUVChannelReady _ k) -> mkTimeCheck k
     AUe.MUCast _ _     -> aLangErr "casting"
     AUe.MUConst x      -> SELit (trConst x)
     AUe.MUAdd _ _      -> addExpr a b
@@ -361,6 +379,28 @@ trUExpr umap ues h =
         b  = ops !! 1
         c  = ops !! 2
 
+-- | Construct a preducate that checks the fault status of a sending node and
+-- returns either a faulty value (depending on the fault type) or the value
+-- stored in the calendar entry.
+mkFaultCheck :: [AEla.ChanInfo] -> ATyp.Name -> SallyExpr
+mkFaultCheck chans nm = muxExpr checkFault faultVal calVal
+  where checkFault = SEPre $ SPEq (varExpr' (mkFaultNodeName srcId))
+                                  (toSallyExpr NonFaulty)
+        -- TODO clean up all these variable name expression compositions
+        faultVal = varExpr' . inputName . mkFaultChanValueName . uglyHack $ nm
+        calVal   = varExpr' . stateName . fst . mkChanStateNames . uglyHack $ nm
+        srcId    = case filter (\c -> AEla.cinfoName c == nm) chans of
+                     [c] -> AEla.cinfoSrc c
+                     [] -> error "mkFaultCheck: found chan ref with no ChanInfo"
+                     _  -> error "mkFaultCheck: found chan ref >= 1 ChanInfo"
+
+
+-- | Construct a predicate that checks the given time for equality with the
+-- global time.
+mkTimeCheck :: ATyp.Name -> SallyExpr
+mkTimeCheck nm = SEPre $ SPEq chanTime globalTime
+  where chanTime   = varExpr' . stateName . snd . mkChanStateNames . uglyHack $ nm
+        globalTime = varExpr' clockTimeName
 
 -- Calendar Automata Parameters ------------------------------------------------
 
@@ -418,4 +458,4 @@ mkTSystemName :: Name -> Name
 mkTSystemName = (`scoreNames` "transition_system")
 
 clockTimeName :: Name
-clockTimeName = "t"
+clockTimeName = "__t"

@@ -33,12 +33,16 @@ module Language.Sally.Types (
   , SallyPred(..)
   , SallyVar(..)
   , SallyExpr(..)
+  , ToSallyExpr(..)
   , SallyStateFormula(..)
   , SallyLet
   , SallyTransition(..)
   , SallySystem(..)
   , TrResult(..)
     -- * better constructors
+  , boolExpr
+  , intExpr
+  , realExpr
   , addExpr
   , subExpr
   , multExpr
@@ -162,6 +166,9 @@ data SallyExpr = SELit   SallyConst              -- ^ constant literal
                | SEMux   SallyExpr SallyExpr SallyExpr  -- ^ if then else
   deriving (Show, Eq)
 
+class ToSallyExpr a where
+  toSallyExpr :: a -> SallyExpr
+
 instance ToSExp SallyExpr where
   toSExp (SELit x)   = SXBare (sxPretty x)
   toSExp (SEVar x)   = SXBare (sxPretty x)
@@ -207,6 +214,16 @@ instance ToSExp SallyArith where
 
 
 -- Better Constructors ---------------------------------------------------------
+
+boolExpr :: Bool -> SallyExpr
+boolExpr = SELit . SConstBool
+
+intExpr :: Integral a => a -> SallyExpr
+intExpr = SELit . SConstInt . fromIntegral
+
+realExpr :: Real a => a -> SallyExpr
+realExpr = SELit . SConstReal . toRational
+
 
 -- | Better constructor for adding expressions
 --   TODO maintain normal form
@@ -272,6 +289,7 @@ varExpr = SEVar
 
 varExpr' :: Name -> SallyExpr
 varExpr' = SEVar . varFromName
+
 
 -- Simplification --------------------------------------------------------------
 
