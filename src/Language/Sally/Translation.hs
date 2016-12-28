@@ -163,7 +163,7 @@ trState _conf name sh rules chans = SallyState (mkStateTypeName name) vars invar
     -- provide non-deterministic values on faulty channels.
     synthInvars :: [(Name, SallyBaseType)]
     synthInvars =
-      [ ( mkFaultChanValueName (trName . uglyHack . AEla.cinfoName $ c)
+      [ ( mkFaultChanValueName (uglyHack . AEla.cinfoName $ c)
         , trType (AEla.cinfoType c))
       | c <- chans ]
 
@@ -233,7 +233,10 @@ trRules _conf name st umap rules = (catMaybes $ map trRule rules) ++ [master]
 
         -- master transition is (for now) the disjunction of all minor
         -- transitions
-        -- TODO add non-deterministic single transitions
+        -- TODO add non-deterministic single-node transitions (Update: not clear if
+        -- we really require single-node transitions. Allowing simultaneous-node
+        -- transitions, as well as single-node is more general and simpler to
+        -- encode..)
         master = SallyTransition (mkMasterTransName name)
                                  (mkStateTypeName name)
                                  []
@@ -264,10 +267,11 @@ trRules _conf name st umap rules = (catMaybes $ map trRule rules) ++ [master]
               lk h = fromMaybe (error $ lkErr h) $ lookup h ues
 
               vName muv = case muv of
-                AUe.MUV _ n _    -> trName . uglyHack $ n
+                AUe.MUV _ n _    -> uglyHack n
                 AUe.MUVArray{}   -> error "trRules: arrays are not supported"
                 AUe.MUVExtern{}  -> error "trRules: external vars are not supported"
-                AUe.MUVChannel{} -> error "trRules: Chan can't appear in lhs of assign"
+                AUe.MUVChannel{} -> error ("trRules: Chan can't appear in lhs "
+                                         ++"of assign, use 'writeChannel' instead.")
                 AUe.MUVChannelReady{} ->
                   error "trRules: Chan can't appear in lhs of assign"
               handleAssign (muv, h) = SPEq (varExpr' (nextName . vName $ muv))
@@ -288,25 +292,28 @@ trRules _conf name st umap rules = (catMaybes $ map trRule rules) ++ [master]
         mkPred _ = error "impossible! assert or coverage rule found in mkPred"
 
 -- | s/\./!/g
-uglyHack :: String -> String
-uglyHack = map dotToBang
+uglyHack :: String -> Name
+uglyHack = trName . map dotToBang
   where dotToBang '.' = '!'
         dotToBang c   = c
 
 -- Translate Expressions -------------------------------------------------------
 
-trUExpr :: AUe.UeMap -> [(AUe.Hash, SallyVar)] -> AUe.Hash -> SallyExpr
+trUExpr :: AUe.UeMap               -- ^ untyped expression map
+        -> [(AUe.Hash, SallyVar)]  -- ^ pre-translated arguments to the expression head
+        -> AUe.Hash                -- ^ hash of expression head
+        -> SallyExpr
 trUExpr umap ues h =
   case AUe.getUE h umap of
-    AUe.MUVRef (AUe.MUV _ k _) -> varExpr' . stateName . trName . uglyHack $ k
+    AUe.MUVRef (AUe.MUV _ k _)     -> varExpr' . stateName . uglyHack $ k
     AUe.MUVRef (AUe.MUVArray _ _)  -> aLangErr "arrays"
     AUe.MUVRef (AUe.MUVExtern k _) -> aLangErr $ "external variable " ++ k
     AUe.MUVRef (AUe.MUVChannel _ k _) ->
       -- XXX trap access to channel, adding check for faults
-      varExpr' . stateName . fst . mkChanStateNames . trName . uglyHack $ k
+      varExpr' . stateName . fst . mkChanStateNames . uglyHack $ k
     AUe.MUVRef (AUe.MUVChannelReady _ k) ->
       -- XXX translate the Channel Ready? question into a chanTime question?
-      varExpr' . stateName . snd . mkChanStateNames . trName . uglyHack $ k
+      varExpr' . stateName . snd . mkChanStateNames . uglyHack $ k
     AUe.MUCast _ _     -> aLangErr "casting"
     AUe.MUConst x      -> SELit (trConst x)
     AUe.MUAdd _ _      -> addExpr a b
