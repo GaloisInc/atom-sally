@@ -142,8 +142,10 @@ trState :: TrConfig
 trState _conf name sh rules chans = SallyState (mkStateTypeName name) vars invars
   where
     invars = synthInvars  -- TODO expose input variables to DSL
-    vars = if AEla.isHierarchyEmpty sh then []
-           else go Nothing sh
+    vars = (if AEla.isHierarchyEmpty sh then []
+                                        else go Nothing sh)
+           ++ faultStatusVars
+           ++ clockVars
 
     -- Recursive helper function to traverse the state hierarchy
     -- TODO (Maybe Name) for prefix is a little awkward here
@@ -153,23 +155,27 @@ trState _conf name sh rules chans = SallyState (mkStateTypeName name) vars invar
     go prefix (AEla.StateVariable nm c) =
       [(prefix `bangPrefix` (trName nm), trTypeConst c)]
     go prefix (AEla.StateChannel nm t) =
-      let (chanVar, chanReady) = mkChanStateNames (prefix `bangPrefix` (trName nm))
-      in [(chanVar, trType t), (chanReady, SBool)]
+      let (chanVar, chanTime) = mkChanStateNames (prefix `bangPrefix` (trName nm))
+      in [(chanVar, trType t), (chanTime, SReal)]
     go _prefix (AEla.StateArray _ _) = error "atom-sally does not yet support arrays"
 
+    -- Declare one (channel typed) input variable per CHANNEL, used to
+    -- provide non-deterministic values on faulty channels.
     synthInvars :: [(Name, SallyBaseType)]
     synthInvars =
-      -- Declare one (channel typed) input variable per CHANNEL, used to
-      -- provide non-deterministic values on faulty channels.
-         [ ( mkFaultChanValueName (AEla.cinfoId  c)
-                                  (trName . uglyHack . AEla.cinfoName $ c)
-           , trType (AEla.cinfoType c))
-         | c <- chans ]
-      -- Declare one boolean input variable per NODE, these are latched into
-      -- corresponding state variables at the start of the trace and determine
-      -- which nodes are faulty.
-      ++ [ (mkFaultNodeName (AEla.ruleId r) name, SBool)
-         | r@(AEla.Rule{}) <- rules ]
+      [ ( mkFaultChanValueName (trName . uglyHack . AEla.cinfoName $ c)
+        , trType (AEla.cinfoType c))
+      | c <- chans ]
+
+    -- Declare one boolean state variable per NODE, these are left
+    -- unconstrained in both the init block and the transition blocks so
+    -- they remain constant throughout a trace.
+    faultStatusVars :: [(Name, SallyBaseType)]
+    faultStatusVars = [ (mkFaultNodeName (AEla.ruleId r), SBool)
+                      | r@(AEla.Rule{}) <- rules ]
+
+    clockVars :: [(Name, SallyBaseType)]
+    clockVars = [ (clockTimeName, SReal) ]
 
 bangPrefix :: Maybe Name -> Name -> Name
 bangPrefix mn n = maybe n (`bangNames` n) mn
@@ -180,21 +186,23 @@ trInit _conf name sh = SallyStateFormula (mkInitStateName name)
                                         (mkStateTypeName name)
                                         spred
   where
-    spred = simplifyAnds $ if AEla.isHierarchyEmpty sh then (SPConst True)
-                           else go Nothing sh
+    spred  = simplifyAnds $ SPAnd (Seq.fromList [nodeInit, clockInit])
 
-    -- general level call
+    nodeInit = if AEla.isHierarchyEmpty sh then (SPConst True)
+                                           else go Nothing sh
     go :: Maybe Name -> AEla.StateHierarchy -> SallyPred
     go prefix (AEla.StateHierarchy nm items) =
       SPAnd (Seq.fromList $ map (go (Just $ prefix `bangPrefix` (trName nm))) items)
     go prefix (AEla.StateVariable nm c) =
       SPEq (varExpr' (prefix `bangPrefix` (trName nm))) (trConstE c)
     go prefix (AEla.StateChannel nm t) =
-      let (chanVar, chanReady) = mkChanStateNames (prefix `bangPrefix` (trName nm))
+      let (chanVar, chanTime) = mkChanStateNames (prefix `bangPrefix` (trName nm))
       in SPAnd (  Seq.empty
                |> SPEq (varExpr' chanVar) (trInitForType t)
-               |> SPEq (varExpr' chanReady) (trInitForType AExp.Bool))
+               |> SPEq (varExpr' chanTime) invalidTime)
     go _prefix (AEla.StateArray _ _) = error "atom-sally does not yet support arrays"
+
+    clockInit = SPEq (varExpr' clockTimeName) initialTime
 
 -- | Collect the state type name, initial states name, and master transition
 -- name into a 'SallySystem' record.
@@ -294,8 +302,10 @@ trUExpr umap ues h =
     AUe.MUVRef (AUe.MUVArray _ _)  -> aLangErr "arrays"
     AUe.MUVRef (AUe.MUVExtern k _) -> aLangErr $ "external variable " ++ k
     AUe.MUVRef (AUe.MUVChannel _ k _) ->
+      -- XXX trap access to channel, adding check for faults
       varExpr' . stateName . fst . mkChanStateNames . trName . uglyHack $ k
     AUe.MUVRef (AUe.MUVChannelReady _ k) ->
+      -- XXX translate the Channel Ready? question into a chanTime question?
       varExpr' . stateName . snd . mkChanStateNames . trName . uglyHack $ k
     AUe.MUCast _ _     -> aLangErr "casting"
     AUe.MUConst x      -> SELit (trConst x)
@@ -345,6 +355,17 @@ trUExpr umap ues h =
         c  = ops !! 2
 
 
+-- Calendar Automata Parameters ------------------------------------------------
+
+-- | Initial value and place holder value for calendar time entries.
+invalidTime :: SallyExpr
+invalidTime = SELit $ SConstReal (-1)
+
+-- | Initial value for 't' in the model.
+initialTime :: SallyExpr
+initialTime = SELit $ SConstReal 0
+
+
 -- Name Generation Utilities ---------------------------------------------------
 
 -- | name --> @name_state_type@
@@ -359,26 +380,26 @@ mkInitStateName = (`scoreNames` "initial_state")
 mkMasterTransName :: Name -> Name
 mkMasterTransName = (`scoreNames` "transition")
 
--- | name --> (@name!var@, @name!ready@)
+-- | name --> (@name!var@, @name!time@)
 mkChanStateNames :: Name -> (Name, Name)
-mkChanStateNames name = (chanVar, chanReady)
+mkChanStateNames name = (chanVar, chanTime)
   where chanVar   = name `bangNames` "var"
-        chanReady = name `bangNames` "ready"
+        chanTime = name `bangNames` "time"
 
 -- | i name --> @name_transition_i@
 mkTransitionName :: Int -> Name -> Name
 mkTransitionName i name = name `scoreNames` "transition" `scoreNames`
                           nameFromS (show i)
 
--- | i cname aname --> @aname_transition_fault_value_cname_i@
-mkFaultChanValueName :: Int -> Name -> Name
-mkFaultChanValueName i cnm =
-  cnm `bangNames` "fault_value" `bangNames` nameFromS (show i)
+-- | cname --> @cname!fault@
+mkFaultChanValueName :: Name -> Name
+mkFaultChanValueName cnm =
+  cnm `bangNames` "fault"
 
--- | i name --> @name_transition_fault_node_i@
-mkFaultNodeName :: Int -> Name -> Name
-mkFaultNodeName i nm =
-  nm `bangNames` "faulty_node" `bangNames` nameFromS (show i)
+-- | i name --> @name!fault_node!i@
+mkFaultNodeName :: Int -> Name
+mkFaultNodeName i =
+  "__faulty_node" `bangNames` nameFromS (show i)
 
 -- | Translate a shared expression reference (an Int) to a variable, e.g.
 -- @temp!0@.
@@ -388,3 +409,6 @@ trExprRef i = varFromName $ nameFromT "temp" `bangNames` nameFromS (show i)
 -- | name --> name_transition_system
 mkTSystemName :: Name -> Name
 mkTSystemName = (`scoreNames` "transition_system")
+
+clockTimeName :: Name
+clockTimeName = "t"

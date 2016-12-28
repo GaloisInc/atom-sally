@@ -56,6 +56,7 @@ module Language.Sally.Types (
 
 import Data.Foldable (toList)
 import Data.List (intersperse)
+import Data.Ratio (numerator, denominator)
 import Data.Sequence (Seq, (<|), (><), viewl, ViewL(..))
 import qualified Data.Sequence as Seq
 import Data.String
@@ -123,7 +124,12 @@ instance ToSExp SallyConst where
     let bare = SXBare $ integer x
     in if x >= 0 then bare
        else SXList [bare]  -- if x < 0, enclose in parens
-  toSExp (SConstReal x) = SXBare $ rational x
+  toSExp (SConstReal x) =
+    let nx = numerator x
+        dx = denominator x
+    in if dx == 1 then SXBare (integer nx)  -- special case integers
+                  else SXList [ SXBare "/", SXBare (integer nx)
+                              , SXBare (integer dx) ]
 
 -- | Base data types in Sally: Booleans, (mathematical) Integers, and
 -- (mathematical) Reals
