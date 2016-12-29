@@ -41,6 +41,7 @@ module Language.Sally.Types (
   , TrResult(..)
     -- * better constructors
   , boolExpr
+  , boolPred
   , intExpr
   , realExpr
   , addExpr
@@ -48,6 +49,7 @@ module Language.Sally.Types (
   , multExpr
   , notExpr
   , eqExpr
+  , neqExpr
   , ltExpr
   , muxExpr
   , andExprs
@@ -56,6 +58,7 @@ module Language.Sally.Types (
   , varExpr'
   , simplifyAnds
   , simplifyOrs
+  , minExpr
 ) where
 
 import Data.Foldable (toList)
@@ -218,6 +221,9 @@ instance ToSExp SallyArith where
 boolExpr :: Bool -> SallyExpr
 boolExpr = SELit . SConstBool
 
+boolPred :: Bool -> SallyPred
+boolPred = SPConst
+
 intExpr :: Integral a => a -> SallyExpr
 intExpr = SELit . SConstInt . fromIntegral
 
@@ -258,6 +264,9 @@ ltExpr x y = SEPre (SPLt x y)
 
 notExpr :: SallyExpr -> SallyExpr
 notExpr x = SEPre (SPNot (getPred x))
+
+neqExpr :: SallyExpr -> SallyExpr -> SallyExpr
+neqExpr x y = notExpr (eqExpr x y)
 
 -- | Turn a SallyExpr into a SallyPred (if possible)
 getPred :: SallyExpr -> SallyPred
@@ -351,6 +360,21 @@ simplifyOrs p =
     SPNot   x   -> SPNot (simplifyOrs x)
     _           -> p  -- TODO simplify arithmetic predicates?
 
+-- | Given a non-empty finite list of expressions, build an expression to
+-- compute their minimum. The second argument is a special value which, if
+-- present causes expressions in the list with this value to be ignored in the
+-- calculation. If the input list contains only the special value, then the
+-- special value itself is returned.
+minExpr :: [SallyExpr] -> Maybe SallyExpr -> SallyExpr
+minExpr [] _ = error "minExpr: cannot apply minExpr to empty list"
+minExpr (x:rest) sp' = go sp' x rest
+  where go _ m [] = m
+        go Nothing m (y:more) = muxExpr (ltExpr m y)
+                                        (go sp' m more)
+                                        (go sp' y more)
+        go (Just sp) m (y:more) = muxExpr (andExprs [ltExpr m y, neqExpr m sp])
+                                          (go sp' m more)
+                                          (go sp' y more)
 
 -- Compound Sally Types --------------------------------------------------------
 

@@ -239,7 +239,8 @@ trRules :: TrConfig
         -> [AEla.ChanInfo]
         -> [AEla.Rule]
         -> [SallyTransition]
-trRules _conf name st umap chans rules = (catMaybes $ map trRule rules) ++ [master]
+trRules _conf name st umap chans rules = (catMaybes $ map trRule rules)
+                                      ++ [clock, master]
   where trRule :: AEla.Rule -> Maybe SallyTransition
         trRule r@(AEla.Rule{}) = Just $ SallyTransition (mkTName r)
                                                         (mkStateTypeName name)
@@ -258,7 +259,24 @@ trRules _conf name st umap chans rules = (catMaybes $ map trRule rules) ++ [mast
                                  []
                                  (masterPred)
         minorTrans = map (SPExpr . SEVar . varFromName . mkTName) rules
-        masterPred = simplifyOrs $ SPOr (Seq.fromList minorTrans)
+        masterPred = simplifyOrs $ SPOr (   Seq.fromList minorTrans
+                                         |> SPExpr (varExpr' (mkClockTransName name)))
+
+        clock = SallyTransition (mkClockTransName name)
+                                (mkStateTypeName name)
+                                []
+                                clockPred
+        -- minExpr builds an expression representing the minimum time on the
+        -- calendar (ignoring invalid times)
+        clockPred =
+          if length chans > 0
+             then let m = minExpr calTimes (Just invalidTime)
+                  in SPAnd $ Seq.empty
+                       |> SPLt clockExpr m
+                       |> SPEq clockExpr' m
+             else boolPred False  -- case of no channels
+        calTimes = map ( varExpr' . stateName . snd . mkChanStateNames
+                       . uglyHack . AEla.cinfoName) chans
 
         mkTName :: AEla.Rule -> Name
         mkTName r@(AEla.Rule{}) = mkTransitionName (AEla.ruleId r) name
@@ -398,9 +416,8 @@ mkFaultCheck chans nm = muxExpr checkFault faultVal calVal
 -- | Construct a predicate that checks the given time for equality with the
 -- global time.
 mkTimeCheck :: ATyp.Name -> SallyExpr
-mkTimeCheck nm = SEPre $ SPEq chanTime globalTime
+mkTimeCheck nm = SEPre $ SPEq chanTime clockExpr
   where chanTime   = varExpr' . stateName . snd . mkChanStateNames . uglyHack $ nm
-        globalTime = varExpr' clockTimeName
 
 -- Calendar Automata Parameters ------------------------------------------------
 
@@ -426,6 +443,10 @@ mkInitStateName = (`scoreNames` "initial_state")
 -- | name --> @name_transition@
 mkMasterTransName :: Name -> Name
 mkMasterTransName = (`scoreNames` "transition")
+
+-- | name --> @name_clock_transition@
+mkClockTransName :: Name -> Name
+mkClockTransName = (`scoreNames` "clock_transition")
 
 -- | name --> (@name!var@, @name!time@)
 mkChanStateNames :: Name -> (Name, Name)
@@ -459,3 +480,11 @@ mkTSystemName = (`scoreNames` "transition_system")
 
 clockTimeName :: Name
 clockTimeName = "__t"
+
+-- | clock state
+clockExpr :: SallyExpr
+clockExpr = varExpr' clockTimeName
+
+-- | next clock state
+clockExpr' :: SallyExpr
+clockExpr' = varExpr' . nextName $ clockTimeName
