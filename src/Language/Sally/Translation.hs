@@ -34,6 +34,7 @@ import qualified Language.Atom.Expressions as AExp
 import qualified Language.Atom.UeMap as AUe
 
 import           Language.Sally.Config
+import           Language.Sally.Expr
 import           Language.Sally.FaultModel
 import           Language.Sally.Types
 

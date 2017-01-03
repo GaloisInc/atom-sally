@@ -23,6 +23,7 @@ flag develop
 library
   exposed-modules:   Language.Sally
                    , Language.Sally.Config
+                   , Language.Sally.Expr
                    , Language.Sally.FaultModel
                    , Language.Sally.PPrint
                    , Language.Sally.Translation
