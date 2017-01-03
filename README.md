@@ -7,7 +7,16 @@ systems in the model language of Sally [2].
 
 This is a work in progress, please check back soon!
 
+
 # Quick Start
+
+Run the `install.sh` script located in the top-level directory of the
+repository. This will download our forked version of the Atom DSL, and build
+the Atom to Sally Translator in place. See "Less Quick Start" below for more
+on generating and model-checking models.
+
+
+# Less Quick Start
 
 You'll need our fork of Atom and a recent Haskell development environment.
 You'll also need a working copy of Sally if you want to check the generated
