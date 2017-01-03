@@ -21,6 +21,8 @@ module Language.Sally (
   , TrConfig(..)
   , FaultAssump(..)
   , defaultCfg
+    -- * Language.Sally.FaultModel
+  , module Language.Sally.FaultModel
     -- * Language.Sally.Types
   , nameFromS
   , nameFromT
@@ -30,6 +32,7 @@ import System.IO
 import Language.Atom
 
 import Language.Sally.Config
+import Language.Sally.FaultModel
 import Language.Sally.PPrint
 import Language.Sally.Translation
 import Language.Sally.Types

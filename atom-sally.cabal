@@ -50,6 +50,7 @@ test-suite atom-sally-test
   build-depends:       base
                      , atom-sally
                      , atom        >= 1.1.0
+                     , containers  >= 0.5
                      , filepath    >= 1.4.1
 
   default-language:    Haskell2010

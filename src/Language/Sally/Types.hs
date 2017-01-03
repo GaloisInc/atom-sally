@@ -32,6 +32,7 @@ module Language.Sally.Types (
   , SallyState(..)
   , SallyPred(..)
   , SallyVar(..)
+  , SallyArith(..)
   , SallyExpr(..)
   , ToSallyExpr(..)
   , SallyStateFormula(..)
@@ -39,26 +40,11 @@ module Language.Sally.Types (
   , SallyTransition(..)
   , SallySystem(..)
   , TrResult(..)
-    -- * better constructors
-  , boolExpr
-  , boolPred
-  , intExpr
-  , realExpr
-  , addExpr
-  , subExpr
-  , multExpr
-  , notExpr
-  , eqExpr
-  , neqExpr
-  , ltExpr
-  , muxExpr
-  , andExprs
-  , orExprs
-  , varExpr
-  , varExpr'
+  -- * term rewriting
   , simplifyAnds
   , simplifyOrs
-  , minExpr
+  , flattenAnds
+  , flattenOrs
 ) where
 
 import Data.Foldable (toList)
@@ -134,9 +120,9 @@ instance ToSExp SallyConst where
   toSExp (SConstReal x) =
     let nx = numerator x
         dx = denominator x
-    in if dx == 1 then SXBare (integer nx)  -- special case integers
-                  else SXList [ SXBare "/", SXBare (integer nx)
-                              , SXBare (integer dx) ]
+    in if dx == 1 then toSExp (SConstInt nx)  -- special case integers
+                  else SXList [ SXBare "/", toSExp (SConstInt nx)
+                              , toSExp (SConstInt dx) ]
 
 -- | Base data types in Sally: Booleans, (mathematical) Integers, and
 -- (mathematical) Reals
@@ -149,6 +135,7 @@ instance ToSExp SallyBaseType where
   toSExp SBool = bareText "Bool"
   toSExp SInt  = bareText "Int"
   toSExp SReal = bareText "Real"
+
 
 -- Untyped Expression AST for Sally --------------------------------------------
 
@@ -463,11 +450,13 @@ instance ToSExp SallySystem where
 
 -- | The result of translation, a specific form of the Sally AST.
 data TrResult = TrResult
-  { tresState  :: SallyState
-  , tresConsts :: [SallyConst]
-  , tresInit   :: SallyStateFormula
-  , tresTrans  :: [SallyTransition]
-  , tresSystem :: SallySystem
+  { tresState    :: SallyState           -- ^ system state variables
+  , tresFormulas :: [SallyStateFormula]  -- ^ state formulas used in transitions
+                                         --   and queries
+  , tresConsts   :: [SallyConst]         -- ^ declared constants
+  , tresInit     :: SallyStateFormula    -- ^ initialization formula
+  , tresTrans    :: [SallyTransition]    -- ^ system transitions
+  , tresSystem   :: SallySystem          -- ^ system definition
   }
   deriving (Show, Eq)
 
@@ -480,6 +469,9 @@ instance Pretty TrResult where
                    , init_comment
                    , sxPretty (tresInit tr)
                    ] <$$>
+              vcat (formulas_comment : intersperse
+                                         sallyCom
+                                         (map sxPretty (tresFormulas tr))) <$$>
               vcat (trans_comment : intersperse
                                       sallyCom
                                       (map sxPretty (tresTrans tr))) <$$>
@@ -490,6 +482,7 @@ instance Pretty TrResult where
       consts_comment = sallyCom <+> text "Constants"
       state_comment  = linebreak <> sallyCom <+> text "State type"
       init_comment   = linebreak <> sallyCom <+> text "Initial State"
+      formulas_comment = linebreak <> sallyCom <+> text "State Formulas"
       trans_comment  = linebreak <> sallyCom <+> text "Transitions"
       system_comment = linebreak <> sallyCom <+> text "System Definition"
 

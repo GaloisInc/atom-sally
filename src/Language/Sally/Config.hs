@@ -14,11 +14,13 @@ module Language.Sally.Config
   ( TrConfig(..)
   , FaultAssump(..)
   , defaultCfg
+  , Weights
   ) where
 
 import Language.Sally.FaultModel
 import Language.Sally.Types
-import Data.Map (Map)
+import Data.Map.Strict (Map)
+
 
 -- | Translation configuration, including settings for the fault model.
 data TrConfig = TrConfig
@@ -37,12 +39,16 @@ defaultCfg = TrConfig
   , cfgTopNameSpace = True
   }
 
+-- | Assignment of weights to each fault type
+type Weights = Map FaultType Int
+
 -- | Type representing possible fault model assumptions
 data FaultAssump =
   -- | No faulty nodes
     NoFaults
-  -- | Hybrid faults with weights and upper bound on weighted
-  -- sum
-  | HybridFaults (Map FaultType Int) Int
-  -- | Fixed configuration of faulty nodes
+  -- | Hybrid faults with weights and a constant term
+  -- TODO: elaborate
+  | HybridFaults Weights Int
+  -- | Fixed configuration of faulty nodes. Nodes not specified are assigned
+  -- 'NonFaulty'.
   | FixedFaults (Map Name FaultType)

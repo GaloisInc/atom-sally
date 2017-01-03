@@ -3,6 +3,7 @@
 module Main where
 
 import Data.Int
+import qualified Data.Map.Strict as Map
 import System.FilePath.Posix
 import System.IO
 
@@ -67,27 +68,31 @@ atom3 = atom "atom3" $ do
     cond $ fullChannel cout
     msg <== readChannel cout
 
+hybridCfg :: TrConfig
+hybridCfg = defaultCfg { cfgMFA = HybridFaults ws 0 }
+  where ws = Map.fromList [ (NonFaulty, 0), (ManifestFaulty, 1), (SymmetricFaulty, 2)
+                          , (ByzantineFaulty, 3)
+                          ]
 
 
 -- Main -----------------------------------------------------------------
 
 putHeader = putStrLn (replicate 72 '-')
 
-testCompile :: (String, Atom (), String) -> IO ()
-testCompile (nm, spec, q) = do
+testCompile :: (String, Atom (), TrConfig, String) -> IO ()
+testCompile (nm, spec, cfg, q) = do
   let fname = testDir </> nm ++ ".mcmt"
-  let cfg = defaultCfg { cfgTopNameSpace = False }
   compileToSally nm cfg fname spec (Just q)
   putStrLn ("compiled " ++ fname)
 
 -- | List of (Name, Atom, Query) to translate and print
-suite :: [(String, Atom (), String)]
+suite :: [(String, Atom (), TrConfig, String)]
 suite =
-  [ ("A1", atom1,
+  [ ("A1", atom1, hybridCfg,
         "(query A1_transition_system (<= 0 A1!atom1!x))")
-  , ("A2", atom2,
+  , ("A2", atom2, hybridCfg,
         "(query A2_transition_system (=> A2!atom2!alice!a A2!atom2!flag))")
-  , ("A3", atom3,
+  , ("A3", atom3, hybridCfg,
         unwords [ "(query A3_transition_system"
                 , "  (=> (not (= A3!atom3!bob!msg (-1))) A3!atom3!alice!done))"])
   ]

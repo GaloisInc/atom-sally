@@ -13,7 +13,7 @@ data FaultType = NonFaulty
                | ManifestFaulty
                | SymmetricFaulty
                | ByzantineFaulty
-  deriving (Eq, Show, Enum, Bounded)
+  deriving (Eq, Ord, Show, Enum, Bounded)
 
 faultTypeMin :: Int
 faultTypeMin = fromEnum (minBound :: FaultType)
