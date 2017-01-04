@@ -158,8 +158,11 @@ suite =
   , ("A4", atom4, atom4Cfg,
         unwords [ "(query A4_transition_system"
                 , "  (=> A4_mfa_formula"
-                , "    (=> A4!atom4!nodeC!done (and (= A4!atom4!nodeC!msg 1)"
-                , "                                 (= A4!__t 2)))))"])
+                , "    (=> A4!atom4!nodeC!done (= A4!atom4!nodeC!msg 1))))"
+                , "\n\n"
+                , "(query A4_transition_system"
+                , "  (=> A4_mfa_formula"
+                , "    (=> A4!atom4!nodeC!done (= A4!__t 2))))"])
   ]
 
 main :: IO ()

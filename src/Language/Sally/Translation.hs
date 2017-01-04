@@ -342,17 +342,27 @@ trRules _conf name st umap chans rules = (catMaybes $ map trRule rules)
                                 (mkStateTypeName name)
                                 []
                                 clockPred
-        -- minExpr builds an expression representing the minimum time on the
-        -- calendar (ignoring invalid times)
+        -- to construct the clock predicate we call 'minExpr' which builds an
+        -- expression representing the minimum time on the calendar
+        -- (ignoring invalid times)
         clockPred =
           if length chans > 0
              then let m = minExpr calTimes (Just invalidTime)
-                  in SPAnd $ Seq.empty
-                       |> SPLt (mkClockStateExpr  name) m
-                       |> SPEq (mkClockStateExpr' name) m
+                  in SPAnd $ (Seq.empty
+                               |> SPLt (mkClockStateExpr  name) m
+                               |> SPEq (mkClockStateExpr' name) m)
+                             >< clkLeftovers
              else boolPred False  -- case of no channels
+        timeVar = mkClockTimeName name
+        clkLeftovers = Seq.fromList $ map handleLeftovers (stVars \\ [timeVar])
         calTimes = map ( varExpr' . stateName . snd . mkChanStateNames
                        . uglyHack . AEla.cinfoName) chans
+
+        -- predicate that makes a variable stutter
+        handleLeftovers n = SPEq (varExpr' (nextName n))
+                                 (varExpr' (stateName n))
+        -- all state variables
+        stVars = map fst (sVars st)
 
         mkTName :: AEla.Rule -> Name
         mkTName r@(AEla.Rule{}) = mkTransitionName (AEla.ruleId r) name
@@ -403,10 +413,6 @@ trRules _conf name st umap chans rules = (catMaybes $ map trRule rules)
                 in SPAnd $ Seq.empty
                              |> SPEq calValE (SEVar (lk h))  -- set chan value
                              |> SPEq calTimeE newTimeExpr    -- set chan time
-              handleLeftovers n = SPEq (varExpr' (nextName n))
-                                       (varExpr' (stateName n))
-              -- all state variables
-              stVars = map fst (sVars st)
               -- state vars in this rule
               stVarsUsed = map (vName . fst) (AEla.ruleAssigns r)
                         ++ map (fst . chanNames . fst) (AEla.ruleChanWrite r)
