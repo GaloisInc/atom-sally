@@ -278,7 +278,7 @@ trFormulas conf name _sh rules _chans = [mfaFormula]
                             else e
       where wgt = fromMaybe 0 $ Map.lookup f ws
             cnt = countExpr (intExpr (fromEnum f)) faultStatusVars
-    sumExpr ws wc = addExpr (intExpr wc) (foldl' (fn ws) zeroExpr fts)
+    sumExpr ws wc = constFold $ addExpr (intExpr wc) (foldl' (fn ws) zeroExpr fts)
 
     -- Fixed fault mapping case
     --
