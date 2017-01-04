@@ -26,12 +26,17 @@ import qualified Data.Map.Strict as Map
 
 -- | Translation configuration, including settings for the fault model.
 data TrConfig = TrConfig
-  { -- | maximum fault assumption
-    cfgMFA :: FaultAssump    -- ^ fault model to use
-  , cfgTopNameSpace :: Bool  -- ^ use top-level name space in variables names?
-                             -- TODO this doesn't work currently because of
-                             -- the way Atom generates names during
-                             -- 'elaborate'
+  { -- | maximum fault assumption / fault model to use
+    cfgMFA :: FaultAssump
+    -- | use top-level name space in variables names?
+    --   TODO this doesn't work currently because of
+    --   the way Atom generates names during
+    --   'elaborate'
+  , cfgTopNameSpace :: Bool
+    -- | turn debugging output on, causes extra variables and
+    --   transitions to be generated that aid in
+    --   debugging
+  , cfgDebug :: Bool
   }
 
 -- | Default configuration
@@ -39,6 +44,7 @@ defaultCfg :: TrConfig
 defaultCfg = TrConfig
   { cfgMFA = NoFaults
   , cfgTopNameSpace = True
+  , cfgDebug = False
   }
 
 -- | Assignment of weights to each fault type

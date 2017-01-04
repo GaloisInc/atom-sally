@@ -147,13 +147,14 @@ trState :: TrConfig
         -> [AEla.Rule]
         -> [AEla.ChanInfo]
         -> SallyState
-trState _conf name sh rules chans = SallyState (mkStateTypeName name) vars invars
+trState conf name sh rules chans = SallyState (mkStateTypeName name) vars invars
   where
     invars = synthInvars  -- TODO expose input variables to DSL
     vars = (if AEla.isHierarchyEmpty sh then []
                                         else go Nothing sh)
            ++ faultStatusVars
            ++ clockVars
+           ++ debugVars
 
     -- Recursive helper function to traverse the state hierarchy
     -- TODO (Maybe Name) for prefix is a little awkward here
@@ -185,17 +186,23 @@ trState _conf name sh rules chans = SallyState (mkStateTypeName name) vars invar
     clockVars :: [(Name, SallyBaseType)]
     clockVars = [ (mkClockTimeName name, SReal) ]
 
+    -- debug output consists of one variable: __last_transition  which
+    -- indicates the transition # (aka rule Id) to be taken last
+    debugVars = if cfgDebug conf then [(mkLastTransName name, SInt)]
+                                 else []
+
 bangPrefix :: Maybe Name -> Name -> Name
 bangPrefix mn n = maybe n (`bangNames` n) mn
 
 -- | Produce a predicate describing the initial state of the system.
 trInit :: TrConfig -> Name -> AEla.StateHierarchy -> [AEla.Rule] -> SallyStateFormula
-trInit _conf name sh rules = SallyStateFormula (mkInitStateName name)
+trInit conf name sh rules = SallyStateFormula (mkInitStateName name)
                                                (mkStateTypeName name)
                                                spred
   where
     spred  = simplifyAnds $ SPAnd (Seq.fromList [ nodeInit
                                                 , clockInit
+                                                , debugInit
                                                 , faultFlagConstraints
                                                 ])
 
@@ -214,6 +221,9 @@ trInit _conf name sh rules = SallyStateFormula (mkInitStateName name)
     go _prefix (AEla.StateArray _ _) = error "atom-sally does not yet support arrays"
 
     clockInit = SPEq (varExpr' (mkClockTimeName name)) initialTime
+    debugInit = if cfgDebug conf
+                   then SPEq (varExpr' (mkLastTransName name)) initialLastTrans
+                   else SPConst True
 
     -- constrain node-fault type to values defined in "FaultModel"
     -- In the generated Sally model, 0 = NonFaulty, 1 = ManifestFaulty, etc..
@@ -315,7 +325,7 @@ trRules :: TrConfig
         -> [AEla.ChanInfo]
         -> [AEla.Rule]
         -> [SallyTransition]
-trRules _conf name st umap chans rules = (catMaybes $ map trRule rules)
+trRules conf name st umap chans rules = (catMaybes $ map trRule rules)
                                       ++ [clock, master]
   where trRule :: AEla.Rule -> Maybe SallyTransition
         trRule r@(AEla.Rule{}) = Just $ SallyTransition (mkTName r)
@@ -350,11 +360,18 @@ trRules _conf name st umap chans rules = (catMaybes $ map trRule rules)
              then let m = minExpr calTimes (Just invalidTime)
                   in SPAnd $ (Seq.empty
                                |> SPLt (mkClockStateExpr  name) m
-                               |> SPEq (mkClockStateExpr' name) m)
+                               |> SPEq (mkClockStateExpr' name) m
+                               |> if cfgDebug conf  -- mark a clock transition
+                                     then SPEq lastTransE' clockLastTrans
+                                     else SPConst True)
                              >< clkLeftovers
              else boolPred False  -- case of no channels
-        timeVar = mkClockTimeName name
-        clkLeftovers = Seq.fromList $ map handleLeftovers (stVars \\ [timeVar])
+        lastTransE' = varExpr' . nextName . mkLastTransName $ name
+        -- variables updated by clock
+        clkUsed = mkClockTimeName name : if cfgDebug conf
+                                            then [mkLastTransName name]
+                                            else []
+        clkLeftovers = Seq.fromList $ map handleLeftovers (stVars \\ clkUsed)
         calTimes = map ( varExpr' . stateName . snd . mkChanStateNames
                        . uglyHack . AEla.cinfoName) chans
 
@@ -417,13 +434,22 @@ trRules _conf name st umap chans rules = (catMaybes $ map trRule rules)
               stVarsUsed = map (vName . fst) (AEla.ruleAssigns r)
                         ++ map (fst . chanNames . fst) (AEla.ruleChanWrite r)
                         ++ map (snd . chanNames . fst) (AEla.ruleChanWrite r)
+                        ++ if cfgDebug conf
+                              then [mkLastTransName name]
+                              else []
 
               -- leftovers are vars not explicitly mentioned in the atom body,
               -- we need to make sure they stutter using 'handleLeftovers'
               leftovers = stVars \\ stVarsUsed
+
+              debugOps = if cfgDebug conf
+                            then [SPEq lastTransE' (intExpr (AEla.ruleId r))]
+                            else []
+
               ops = map handleAssign (AEla.ruleAssigns r)
                  ++ map handleChanWrite (AEla.ruleChanWrite r)
                  ++ map handleLeftovers leftovers
+                 ++ debugOps
 
           in simplifyAnds $ SPAnd (Seq.fromList ops)
         mkPred _ = error "impossible! assert or coverage rule found in mkPred"
@@ -533,6 +559,14 @@ invalidTime = SELit $ SConstReal (-1)
 initialTime :: SallyExpr
 initialTime = SELit $ SConstReal 0
 
+-- | Initial value for '__last_transition'.
+initialLastTrans :: SallyExpr
+initialLastTrans = SELit $ SConstInt (-2)
+
+-- | Value for the clock transition in '__last_transition'.
+clockLastTrans :: SallyExpr
+clockLastTrans = SELit $ SConstInt (-1)
+
 -- | Message delay. TODO allow this to be less constrained.
 messageDelay :: SallyExpr
 messageDelay = SELit $ SConstReal 1
@@ -575,6 +609,10 @@ mkFaultChanValueName cnm =
 -- | name1 name2 --> @name1!name2@
 mkNodeName :: Name -> Name -> Name
 mkNodeName _nm = id
+
+-- | name1 name2 --> @name!__last_transition@
+mkLastTransName :: Name -> Name
+mkLastTransName nm = nm `bangNames` "__last_transition"
 
 -- | i name --> @name!fault_node!i@
 mkFaultNodeName :: Name -> Int -> Name

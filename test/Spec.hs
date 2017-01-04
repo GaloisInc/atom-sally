@@ -110,25 +110,25 @@ atom4 = atom "atom4" $ do
     msg <== readChannel coutB2C
     done <== Const True
 
-atom4Cfg :: TrConfig
-atom4Cfg = defaultCfg
-
 -- Configurations --------------------------------------------------------------
+
+-- | Default config for these specs
+defSpecCfg :: TrConfig
+defSpecCfg = defaultCfg { cfgDebug = True }
 
 -- | Example of a hybrid fault model configuration.
 hybridCfg :: TrConfig
-hybridCfg = defaultCfg { cfgMFA = HybridFaults ws 0 }
+hybridCfg = defSpecCfg { cfgMFA = HybridFaults ws 0 }
   where ws = Map.fromList [ (NonFaulty, 0), (ManifestFaulty, 1), (SymmetricFaulty, 2)
                           , (ByzantineFaulty, 3)
                           ]
 
 -- | Example of a fixed fault mapping (specific to 'atom2' above).
 fixedCfg :: TrConfig
-fixedCfg = defaultCfg { cfgMFA = FixedFaults mp }
+fixedCfg = defSpecCfg { cfgMFA = FixedFaults mp }
   where mp = Map.fromList [ ("A2b!atom2!alice", NonFaulty)
                           , ("A2b!atom2!bob",   ByzantineFaulty)
                           ]
-
 
 -- Main -----------------------------------------------------------------
 
@@ -145,7 +145,7 @@ suite :: [(String, Atom (), TrConfig, String)]
 suite =
   [ ("A1", atom1, hybridCfg,
         "(query A1_transition_system (=> A1_mfa_formula (<= 0 A1!atom1!x)))")
-  , ("A1b", atom1, defaultCfg,
+  , ("A1b", atom1, defSpecCfg,
         "(query A1b_transition_system (=> A1b_mfa_formula (<= 0 A1b!atom1!x)))")
   , ("A2", atom2, hybridCfg,
         "(query A2_transition_system (=> A2_mfa_formula (=> A2!atom2!alice!a A2!atom2!flag)))")
@@ -155,7 +155,7 @@ suite =
         unwords [ "(query A3_transition_system"
                 , "  (=> A3_mfa_formula"
                 , "    (=> (not (= A3!atom3!bob!msg (-1))) A3!atom3!alice!done)))"])
-  , ("A4", atom4, atom4Cfg,
+  , ("A4", atom4, defSpecCfg,
         unwords [ "(query A4_transition_system"
                 , "  (=> A4_mfa_formula"
                 , "    (=> A4!atom4!nodeC!done (= A4!atom4!nodeC!msg 1))))"
