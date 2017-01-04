@@ -14,12 +14,14 @@ module Language.Sally.Config
   ( TrConfig(..)
   , FaultAssump(..)
   , defaultCfg
+  , hybridMFA
   , Weights
   ) where
 
 import Language.Sally.FaultModel
 import Language.Sally.Types
 import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 
 
 -- | Translation configuration, including settings for the fault model.
@@ -52,3 +54,14 @@ data FaultAssump =
   -- | Fixed configuration of faulty nodes. Nodes not specified are assigned
   -- 'NonFaulty'.
   | FixedFaults (Map Name FaultType)
+
+-- | An example fault type weighting that is appropriate for systems like
+-- OM(1).
+hybridMFA :: FaultAssump
+hybridMFA =
+  let ws = [ (NonFaulty,       0)
+           , (ManifestFaulty , 1)
+           , (SymmetricFaulty, 2)
+           , (ByzantineFaulty, 3)
+           ]
+  in HybridFaults (Map.fromList ws) 1

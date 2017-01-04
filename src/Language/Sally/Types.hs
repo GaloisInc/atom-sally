@@ -65,6 +65,9 @@ import SExpPP
 newtype Name = Name { textFromName :: Text }
   deriving (Show, Eq, Ord)
 
+instance Pretty Name where
+  pretty = text . textFromName
+
 instance ToSExp Name where
   toSExp = SXBare . text . textFromName
 

@@ -21,6 +21,7 @@ module Language.Sally (
   , TrConfig(..)
   , FaultAssump(..)
   , defaultCfg
+  , hybridMFA
     -- * Language.Sally.FaultModel
   , module Language.Sally.FaultModel
     -- * Language.Sally.Types

@@ -68,10 +68,18 @@ atom3 = atom "atom3" $ do
     cond $ fullChannel cout
     msg <== readChannel cout
 
+-- | Example of a hybrid fault model configuration.
 hybridCfg :: TrConfig
 hybridCfg = defaultCfg { cfgMFA = HybridFaults ws 0 }
   where ws = Map.fromList [ (NonFaulty, 0), (ManifestFaulty, 1), (SymmetricFaulty, 2)
                           , (ByzantineFaulty, 3)
+                          ]
+
+-- | Example of a fixed fault mapping (specific to 'atom2' above).
+fixedCfg :: TrConfig
+fixedCfg = defaultCfg { cfgMFA = FixedFaults mp }
+  where mp = Map.fromList [ ("A2b!atom2!alice", NonFaulty)
+                          , ("A2b!atom2!bob",   ByzantineFaulty)
                           ]
 
 
@@ -90,8 +98,12 @@ suite :: [(String, Atom (), TrConfig, String)]
 suite =
   [ ("A1", atom1, hybridCfg,
         "(query A1_transition_system (<= 0 A1!atom1!x))")
+  , ("A1b", atom1, defaultCfg,
+        "(query A1b_transition_system (<= 0 A1b!atom1!x))")
   , ("A2", atom2, hybridCfg,
         "(query A2_transition_system (=> A2!atom2!alice!a A2!atom2!flag))")
+  , ("A2b", atom2, fixedCfg,
+        "(query A2b_transition_system (=> A2b!atom2!alice!a A2b!atom2!flag))")
   , ("A3", atom3, hybridCfg,
         unwords [ "(query A3_transition_system"
                 , "  (=> (not (= A3!atom3!bob!msg (-1))) A3!atom3!alice!done))"])

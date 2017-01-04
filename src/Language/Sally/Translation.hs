@@ -36,6 +36,7 @@ import qualified Language.Atom.UeMap as AUe
 import           Language.Sally.Config
 import           Language.Sally.Expr
 import           Language.Sally.FaultModel
+import           Language.Sally.PPrint (spPrint)
 import           Language.Sally.Types
 
 
@@ -254,21 +255,48 @@ trFormulas conf name _sh rules _chans = [mfaFormula]
       HybridFaults ws wc -> weightedFaultsPred ws wc
       FixedFaults m      -> fixedFaultsPred m
 
-    -- hybrid fault model case
+    -- Hybrid fault model case
+    --
     weightedFaultsPred ws wc = SPExpr $ leqExpr (sumExpr ws wc) (intExpr numNodes)
     fts = [minBound..maxBound] :: [FaultType]  -- list of possible fault types
-    faultStatusVars = [ varExpr' (mkFaultNodeName name (AEla.ruleId r))
-                      | r@(AEla.Rule{}) <- rules]  -- list of fault status variable
-                                                   -- names
+    nodeFaultE r@AEla.Rule{} = varExpr' (mkFaultNodeName name (AEla.ruleId r))
+    nodeFaultE _ = error "trFormulas: nodeFault: no ruleId for non-Rule"
+    faultStatusVars = map nodeFaultE realRules -- fault status variable names
     numNodes = length faultStatusVars
-    -- given weights, add an expr to a weighted fault count
-    fn ws e f = addExpr e (multExpr (intExpr wgt) cnt)
+    -- given the weights, add an expr to the weighted fault count
+    fn ws e f = if wgt == 0 then addExpr e (multExpr (intExpr wgt) cnt)
+                            else e
       where wgt = fromMaybe 0 $ Map.lookup f ws
             cnt = countExpr (intExpr (fromEnum f)) faultStatusVars
     sumExpr ws wc = addExpr (intExpr wc) (foldl' (fn ws) zeroExpr fts)
 
-    -- fixed fault mapping case
-    fixedFaultsPred _ = error "XXX TODO implelent fixedFaultsPred"
+    -- Fixed fault mapping case
+    --
+    fixedFaultsPred mp =
+      case checkNodeNames mp of
+        Nothing -> let ffConstraints = map (uncurry SPEq) (nodeFs mp)
+                   in SPAnd (Seq.fromList ffConstraints)
+        Just badNames ->
+          error . unwords $ [ "trFormulas:\n  Names given in the FIXED FAULT"
+                            , "MAPPING do not correspond to\n  system"
+                            , "nodes: " ] ++ map spPrint badNames
+
+    checkNodeNames mp =
+      let nms = map nodeNm realRules
+          badNames = filter (\k -> not (k `elem` nms)) (Map.keys mp)
+      in if null badNames then Nothing
+                          else Just badNames
+
+    nodeNm r@AEla.Rule{} = mkNodeName name (uglyHack (AEla.ruleName r))
+    nodeNm _        = error "trFormulas: nodeName: no name for non-Rule"
+    lkFault r mp = intExpr
+                 . fromEnum
+                 . fromMaybe NonFaulty
+                 $ Map.lookup (nodeNm r) mp
+    nodeFs mp = [(nodeFaultE r, lkFault r mp) | r <- realRules]
+    -- TODO emit an error if 'mp' contains names that are not node names
+
+    realRules = [r | r@AEla.Rule{} <- rules]
 
     -- Other formulas
     --
@@ -537,6 +565,10 @@ mkTransitionName i name = name `scoreNames` "transition" `scoreNames`
 mkFaultChanValueName :: Name -> Name
 mkFaultChanValueName cnm =
   cnm `bangNames` "fault"
+
+-- | name1 name2 --> @name1!name2@
+mkNodeName :: Name -> Name -> Name
+mkNodeName _nm = id
 
 -- | i name --> @name!fault_node!i@
 mkFaultNodeName :: Name -> Int -> Name
