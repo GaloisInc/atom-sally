@@ -497,7 +497,7 @@ mkFaultCheck :: Name             -- ^ Atom name
              -> [AEla.ChanInfo]  -- ^ list of all channel info
              -> ATyp.Name        -- ^ channel name
              -> SallyExpr
-mkFaultCheck name chans nm = muxExpr checkFault faultVal calVal
+mkFaultCheck name chans nm = muxExpr checkFault calVal faultVal
   where checkFault = SEPre $ SPEq (varExpr' . stateName $ (mkFaultNodeName name srcId))
                                   (toSallyExpr NonFaulty)
         -- TODO clean up all these variable name expression compositions
