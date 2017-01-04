@@ -11,7 +11,8 @@
 --
 module Language.Sally.PPrint (
   -- * pretty printing
-    pprintSystem
+    spPrint
+  , pprintSystem
   , putSystem
   , putSystemLn
   , hPutSystem
@@ -24,18 +25,20 @@ import qualified Data.ByteString.Lazy.Char8 as BS
 import System.IO (Handle)
 import Text.PrettyPrint.Leijen.Text
 
-import Language.Sally.Types
 
-pprintSystem :: TrResult -> L.Text
+spPrint :: Pretty a => a -> String
+spPrint = L.unpack . pprintSystem
+
+pprintSystem :: Pretty a => a -> L.Text
 pprintSystem = displayT . renderPretty ribbon wid . pretty
   where ribbon = 72 / 80 :: Float
         wid    = 80
 
-putSystem :: TrResult -> IO ()
+putSystem :: Pretty a => a -> IO ()
 putSystem = putDoc . pretty
 
-putSystemLn :: TrResult -> IO ()
+putSystemLn :: Pretty a => a -> IO ()
 putSystemLn tr = putSystem tr >> putStrLn ""
 
-hPutSystem :: Handle -> TrResult -> IO ()
+hPutSystem :: Pretty a => Handle -> a -> IO ()
 hPutSystem h tr = BS.hPutStr h . E.encodeUtf8 . pprintSystem $ tr
