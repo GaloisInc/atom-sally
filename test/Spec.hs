@@ -68,6 +68,53 @@ atom3 = atom "atom3" $ do
     cond $ fullChannel cout
     msg <== readChannel cout
 
+
+-- | Three Atoms communicate through two channels
+--
+--   Property: node C is done implies that node C's 'msg' variable equals 1
+--   ('goodMsgValue'). Futhermore, node C is done implies that the global time
+--   is equal to 2.
+--
+--   (=> A4!atom4!nodeC!done (and (= A4!atom4!nodeC!msg 1)
+--                                (= A4!__t 2)))
+atom4 :: Atom()
+atom4 = atom "atom4" $ do
+
+  let
+    -- | Special message values indicating "no message present", and "correct
+    -- (intended) message"
+    missingMsgValue, goodMsgValue  :: MsgType
+    missingMsgValue = -1
+    goodMsgValue    = 1
+
+  (cinA2B, coutA2B) <- channel "a2b" msgType
+  (cinB2C, coutB2C) <- channel "b2c" msgType
+
+  atom "nodeA" $ do
+    done <- bool "done" False
+    writeChannel cinA2B (Const goodMsgValue)
+    done <== Const True
+
+  atom "nodeB" $ do
+    done <- bool "done" False
+    msg <- int64 "msg" missingMsgValue
+    cond (fullChannel coutA2B)
+    writeChannel cinB2C (readChannel coutA2B :: E MsgType)
+    msg <== readChannel coutA2B
+    done <== Const True
+
+  atom "nodeC" $ do
+    done <- bool "done" False
+    msg <- int64 "msg" missingMsgValue
+    cond (fullChannel coutB2C)
+    msg <== readChannel coutB2C
+    done <== Const True
+
+atom4Cfg :: TrConfig
+atom4Cfg = defaultCfg
+
+-- Configurations --------------------------------------------------------------
+
 -- | Example of a hybrid fault model configuration.
 hybridCfg :: TrConfig
 hybridCfg = defaultCfg { cfgMFA = HybridFaults ws 0 }
@@ -97,16 +144,22 @@ testCompile (nm, spec, cfg, q) = do
 suite :: [(String, Atom (), TrConfig, String)]
 suite =
   [ ("A1", atom1, hybridCfg,
-        "(query A1_transition_system (<= 0 A1!atom1!x))")
+        "(query A1_transition_system (=> A1_mfa_formula (<= 0 A1!atom1!x)))")
   , ("A1b", atom1, defaultCfg,
-        "(query A1b_transition_system (<= 0 A1b!atom1!x))")
+        "(query A1b_transition_system (=> A1b_mfa_formula (<= 0 A1b!atom1!x)))")
   , ("A2", atom2, hybridCfg,
-        "(query A2_transition_system (=> A2!atom2!alice!a A2!atom2!flag))")
+        "(query A2_transition_system (=> A2_mfa_formula (=> A2!atom2!alice!a A2!atom2!flag)))")
   , ("A2b", atom2, fixedCfg,
-        "(query A2b_transition_system (=> A2b!atom2!alice!a A2b!atom2!flag))")
+        "(query A2b_transition_system (=> A2b_mfa_formula (=> A2b!atom2!alice!a A2b!atom2!flag)))")
   , ("A3", atom3, hybridCfg,
         unwords [ "(query A3_transition_system"
-                , "  (=> (not (= A3!atom3!bob!msg (-1))) A3!atom3!alice!done))"])
+                , "  (=> A3_mfa_formula"
+                , "    (=> (not (= A3!atom3!bob!msg (-1))) A3!atom3!alice!done)))"])
+  , ("A4", atom4, atom4Cfg,
+        unwords [ "(query A4_transition_system"
+                , "  (=> A4_mfa_formula"
+                , "    (=> A4!atom4!nodeC!done (and (= A4!atom4!nodeC!msg 1)"
+                , "                                 (= A4!__t 2)))))"])
   ]
 
 main :: IO ()
