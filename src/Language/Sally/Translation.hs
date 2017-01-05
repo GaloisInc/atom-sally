@@ -422,14 +422,21 @@ trRules conf name st umap chans rules = (catMaybes $ map trRule rules)
               -- timeout
               chanNames = mkChanStateNames . uglyHack . ACTyp.cinName
               handleChanWrite (cin, h) =
-                let mkE = varExpr' . nextName
+                let mkE = varExpr' . stateName
+                    mkE' = varExpr' . nextName
                     csnms = chanNames cin
-                    (calValE, calTimeE) = (mkE *** mkE) csnms
+                    (_       , calTimeE) = (mkE *** mkE) csnms
+                    (calValE', calTimeE') = (mkE' *** mkE') csnms
                     globTimeExpr = mkClockStateExpr name
-                    newTimeExpr = addExpr globTimeExpr messageDelay
+                    enableExpr = SEVar (lk (AEla.ruleEnable r))
+                    newTimeExpr = muxExpr enableExpr
+                                          (addExpr globTimeExpr messageDelay)
+                                          calTimeE
                 in SPAnd $ Seq.empty
-                             |> SPEq calValE (SEVar (lk h))  -- set chan value
-                             |> SPEq calTimeE newTimeExpr    -- set chan time
+                             |> SPEq calValE' (SEVar (lk h))  -- set chan value
+                             |> SPEq calTimeE' newTimeExpr    -- set chan time
+                                                             -- XXX require
+                                                             -- enable here
               -- state vars in this rule
               stVarsUsed = map (vName . fst) (AEla.ruleAssigns r)
                         ++ map (fst . chanNames . fst) (AEla.ruleChanWrite r)
@@ -454,11 +461,6 @@ trRules conf name st umap chans rules = (catMaybes $ map trRule rules)
           in simplifyAnds $ SPAnd (Seq.fromList ops)
         mkPred _ = error "impossible! assert or coverage rule found in mkPred"
 
--- | s/\./!/g
-uglyHack :: String -> Name
-uglyHack = trName . map dotToBang
-  where dotToBang '.' = '!'
-        dotToBang c   = c
 
 -- Translate Expressions -------------------------------------------------------
 
@@ -641,3 +643,9 @@ mkClockStateExpr = varExpr' . stateName . mkClockTimeName
 -- | next clock state
 mkClockStateExpr' :: Name -> SallyExpr
 mkClockStateExpr' = varExpr' . nextName . mkClockTimeName
+
+-- | s/\./!/g
+uglyHack :: String -> Name
+uglyHack = trName . map dotToBang
+  where dotToBang '.' = '!'
+        dotToBang c   = c
