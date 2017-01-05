@@ -425,9 +425,12 @@ trRules conf name st umap chans rules = (catMaybes $ map trRule rules)
                 let mkE = varExpr' . stateName
                     mkE' = varExpr' . nextName
                     csnms = chanNames cin
+                    -- current and next variables for calendar entries
                     (_       , calTimeE) = (mkE *** mkE) csnms
                     (calValE', calTimeE') = (mkE' *** mkE') csnms
                     globTimeExpr = mkClockStateExpr name
+                    -- propagate the rule's enable condition to each channel
+                    -- write
                     enableExpr = SEVar (lk (AEla.ruleEnable r))
                     newTimeExpr = muxExpr enableExpr
                                           (addExpr globTimeExpr messageDelay)
@@ -435,8 +438,6 @@ trRules conf name st umap chans rules = (catMaybes $ map trRule rules)
                 in SPAnd $ Seq.empty
                              |> SPEq calValE' (SEVar (lk h))  -- set chan value
                              |> SPEq calTimeE' newTimeExpr    -- set chan time
-                                                             -- XXX require
-                                                             -- enable here
               -- state vars in this rule
               stVarsUsed = map (vName . fst) (AEla.ruleAssigns r)
                         ++ map (fst . chanNames . fst) (AEla.ruleChanWrite r)
