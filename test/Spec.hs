@@ -4,10 +4,12 @@ module Main where
 
 import Data.Int
 import qualified Data.Map.Strict as Map
+import           Control.Monad (void)
 import System.FilePath.Posix
 import System.IO
 
-import Language.Atom hiding (compile)
+import           Language.Atom hiding (compile)
+import qualified Language.Atom as A
 import Language.Sally
 
 testDir :: FilePath
@@ -110,6 +112,45 @@ atom4 = atom "atom4" $ do
     msg <== readChannel coutB2C
     done <== Const True
 
+-- | Atom setting and using a timer based on the time at which it
+--   received a message.
+
+atom5 :: Atom()
+atom5 = atom "atom5" $ do
+
+  let
+    -- | Special message values indicating "no message present", and "correct
+    -- (intended) message"
+    missingMsgValue, goodMsgValue  :: MsgType
+    missingMsgValue = -1
+    goodMsgValue    = 1
+
+  (cin, cout) <- channel "chan" msgType
+  rxTime <- word64 "rxTime" 0
+
+  atom "alice" $ do
+    done <- bool "done" False
+    writeChannel cin (Const goodMsgValue)
+    done <== Const True
+
+  atom "bob" $ do
+
+    atom "recMsg"  $ do  
+      msg <- int64 "msg" missingMsgValue
+      cond $ fullChannel cout
+      msg <== readChannel cout
+      rxTime <== clock
+
+    atom "timerDone" $ do
+      local <- bool "local" False
+      cond (value rxTime + 1000 <. clock)
+      local <== Const True
+    
+compileAtom5 :: IO ()
+compileAtom5 =
+  void $ A.compile "atom5" defaults atom5
+  
+
 -- Configurations --------------------------------------------------------------
 
 -- | Default config for these specs
@@ -163,8 +204,10 @@ suite =
                 , "(query A4_transition_system"
                 , "  (=> A4_mfa_formula"
                 , "    (=> A4!atom4!nodeC!done (= A4!__t 2))))"])
+--  , ("A5", atom5, defSpecCfg, "")
   ]
 
 main :: IO ()
 main = do
   mapM_ testCompile suite
+  compileAtom5
