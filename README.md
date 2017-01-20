@@ -22,8 +22,9 @@ You'll need our fork of Atom and a recent Haskell development environment.
 You'll also need a working copy of Sally if you want to check the generated
 models.
 
-We don't package a build script (yet), but the following commands, in order, will
-get you up and running:
+We don't package a build script (yet), but the following commands, in order,
+will get you up and running (note that the `install.sh` script already performs
+a few of these actions)::
 
 ```
 $ git clone git@github.com:GaloisInc/atom
