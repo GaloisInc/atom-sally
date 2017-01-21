@@ -6,7 +6,6 @@ import Data.Int
 import qualified Data.Map.Strict as Map
 import           Control.Monad (void)
 import System.FilePath.Posix
-import System.IO
 
 import           Language.Atom hiding (compile)
 import qualified Language.Atom as A
@@ -16,6 +15,8 @@ testDir :: FilePath
 testDir = "test"
 
 type MsgType = Int64
+
+msgType :: Type
 msgType = Int64  -- Atom 'Type' value
 
 -- Test Atoms -----------------------------------------------------------
@@ -126,7 +127,6 @@ atom5 = atom "atom5" $ do
     goodMsgValue    = 1
 
   (cin, cout) <- channel "chan" msgType
-  rxTime <- word64 "rxTime" 0
 
   atom "alice" $ do
     done <- bool "done" False
@@ -134,6 +134,8 @@ atom5 = atom "atom5" $ do
     done <== Const True
 
   atom "bob" $ do
+
+    rxTime <- word64 "rxTime" 0
 
     atom "recMsg"  $ do  
       msg <- int64 "msg" missingMsgValue
@@ -143,12 +145,11 @@ atom5 = atom "atom5" $ do
 
     atom "timerDone" $ do
       local <- bool "local" False
-      cond (value rxTime + 1000 <. clock)
+      cond (value rxTime + 1000 >. clock)
       local <== Const True
     
 compileAtom5 :: IO ()
-compileAtom5 =
-  void $ A.compile "atom5" defaults atom5
+compileAtom5 = void $ A.compile (testDir </> "atom5") defaults atom5
   
 
 -- Configurations --------------------------------------------------------------
@@ -173,6 +174,7 @@ fixedCfg = defSpecCfg { cfgMFA = FixedFaults mp }
 
 -- Main -----------------------------------------------------------------
 
+putHeader :: IO ()
 putHeader = putStrLn (replicate 72 '-')
 
 testCompile :: (String, Atom (), TrConfig, String) -> IO ()
@@ -204,6 +206,7 @@ suite =
                 , "(query A4_transition_system"
                 , "  (=> A4_mfa_formula"
                 , "    (=> A4!atom4!nodeC!done (= A4!__t 2))))"])
+-- Need to add clocks to the language first		
 --  , ("A5", atom5, defSpecCfg, "")
   ]
 
