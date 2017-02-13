@@ -16,6 +16,7 @@ module Language.Sally.Translation (
   , TrConfig(..)
 ) where
 
+
 import           Control.Arrow (second, (***))
 import           Data.Foldable (foldl')
 import qualified Data.Map.Strict as Map
@@ -420,7 +421,8 @@ trRules conf name st umap chans rules = (catMaybes $ map trRule rules)
               -- translate channel writes into a pair of assignements, one to
               -- the calendar entry value and one to the calendar entry
               -- timeout
-              chanNames = mkChanStateNames . uglyHack . ACTyp.cinName
+              chanNames :: ACTyp.HasChan a => a -> (Name, Name)
+              chanNames = mkChanStateNames . uglyHack . ACTyp.chanName
               handleChanWrite (cin, h) =
                 let mkE = varExpr' . stateName
                     mkE' = varExpr' . nextName
@@ -438,10 +440,19 @@ trRules conf name st umap chans rules = (catMaybes $ map trRule rules)
                 in SPAnd $ Seq.empty
                              |> SPEq calValE' (SEVar (lk h))  -- set chan value
                              |> SPEq calTimeE' newTimeExpr    -- set chan time
+              -- translate channel consumes into a single assignement to the
+              -- calendar entry time
+              handleChanConsume cout =
+                let calTimeE  = varExpr' . stateName . snd . chanNames $ cout
+                    calTimeE' = varExpr' . nextName . snd . chanNames $ cout
+                    enableExpr = SEVar (lk (AEla.ruleEnable r))
+                    newTime = muxExpr enableExpr invalidTime calTimeE
+                in SPEq calTimeE' newTime
               -- state vars in this rule
               stVarsUsed = map (vName . fst) (AEla.ruleAssigns r)
                         ++ map (fst . chanNames . fst) (AEla.ruleChanWrite r)
                         ++ map (snd . chanNames . fst) (AEla.ruleChanWrite r)
+                        ++ map (snd . chanNames) (AEla.ruleChanConsume r)
                         ++ if cfgDebug conf
                               then [mkLastTransName name]
                               else []
@@ -456,6 +467,7 @@ trRules conf name st umap chans rules = (catMaybes $ map trRule rules)
 
               ops = map handleAssign (AEla.ruleAssigns r)
                  ++ map handleChanWrite (AEla.ruleChanWrite r)
+                 ++ map handleChanConsume (AEla.ruleChanConsume r)
                  ++ map handleLeftovers leftovers
                  ++ debugOps
 
@@ -540,7 +552,9 @@ mkFaultCheck name chans nm = muxExpr checkFault calVal faultVal
         calVal   = varExpr' . stateName . fst . mkChanStateNames . uglyHack $ nm
         srcId    = case filter (\c -> AEla.cinfoName c == nm) chans of
                      [c] -> AEla.cinfoSrc c
-                     [] -> error "mkFaultCheck: found chan ref with no ChanInfo"
+                     [] -> error ( "mkFaultCheck: found chan ref with no ChanInfo:\n"
+                                ++ "  chans: " ++ show chans ++ "\n"
+                                ++ "  name: " ++ show nm ++ "\n")
                      _  -> error "mkFaultCheck: found chan ref >= 1 ChanInfo"
 
 
