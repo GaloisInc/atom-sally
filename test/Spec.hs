@@ -67,7 +67,32 @@ atom3 = atom "atom3" $ do
     msg <- int64 "msg" missingMsgValue
     cond $ fullChannel cout
     msg <== readChannel cout
+    consumeChannel cout
 
+-- | A minimal version of atom3, where two agents commicate one message over a
+-- channel. This version has no "done" flags.
+--   Property: G((/= atom3!bob!msg -1) => (= atom3!__t 1))
+--             F((= atom3!__t 1))
+atom3min :: Atom()
+atom3min = atom "atom3" $ do
+
+  let
+    -- | Special message values indicating "no message present", and "correct
+    -- (intended) message"
+    missingMsgValue, goodMsgValue  :: MsgType
+    missingMsgValue = -1
+    goodMsgValue    = 1
+
+  (cin, cout) <- channel "aTob" msgType
+
+  atom "alice" $ do
+    writeChannel cin (Const goodMsgValue)
+
+  atom "bob" $ do
+    msg <- int64 "msg" missingMsgValue
+    cond $ fullChannel cout
+    msg <== readChannel cout
+    consumeChannel cout
 
 -- | Three Atoms communicate through two channels
 --
@@ -102,6 +127,7 @@ atom4 = atom "atom4" $ do
     writeChannel cinB2C (readChannel coutA2B :: E MsgType)
     msg <== readChannel coutA2B
     done <== Const True
+    consumeChannel coutA2B
 
   atom "nodeC" $ do
     done <- bool "done" False
@@ -109,6 +135,7 @@ atom4 = atom "atom4" $ do
     cond (fullChannel coutB2C)
     msg <== readChannel coutB2C
     done <== Const True
+    consumeChannel coutB2C
 
 -- Configurations --------------------------------------------------------------
 
@@ -155,6 +182,16 @@ suite =
         unwords [ "(query A3_transition_system"
                 , "  (=> A3_mfa_formula"
                 , "    (=> (not (= A3!atom3!bob!msg (-1))) A3!atom3!alice!done)))"])
+    -- different config from A3
+  , ("A3b", atom3, defSpecCfg,
+        unwords [ "(query A3b_transition_system"
+                , "  (=> A3b_mfa_formula"
+                , "    (=> (not (= A3b!atom3!bob!msg (-1))) A3b!atom3!alice!done)))"])
+    -- fewer state vars & different property
+  , ("A3min", atom3min, defSpecCfg,
+        unwords [ "(query A3min_transition_system"
+                , "  (=> A3min_mfa_formula"
+                , "    (=> (not (= A3min!atom3!bob!msg (-1))) (>= A3min!__t 1))))"])
   , ("A4", atom4, defSpecCfg,
         unwords [ "(query A4_transition_system"
                 , "  (=> A4_mfa_formula"
