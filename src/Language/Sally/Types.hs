@@ -276,6 +276,7 @@ data SallySystem = SallySystem
   }
   deriving (Show, Eq)
 
+-- | Pretty print a 'SallySystem'.
 instance ToSExp SallySystem where
     toSExp ss = SXList [ bareText "define-transition-system"
                        , toSExp (sysNm ss)
@@ -299,21 +300,27 @@ data TrResult = TrResult
   }
   deriving (Show, Eq)
 
--- | TrResult requires a special printer since it is not an s-expression
+-- | TrResult requires a special printer since it is not an s-expression. The
+-- order of the 'vcat' items is important because Sally is sensitive to names
+-- being declared before they are used in a model file.
 instance Pretty TrResult where
   pretty tr = vcat [ consts_comment
                    , consts
                    , state_comment
                    , sxPretty (tresState tr)
-                   , init_comment
-                   , sxPretty (tresInit tr)
                    ] <$$>
               vcat (formulas_comment : intersperse
                                          sallyCom
                                          (map sxPretty (tresFormulas tr))) <$$>
+              -- needs to come after formulas
+              vcat [ init_comment
+                   , sxPretty (tresInit tr)
+                   ] <$$>
+              -- needs to come after state, init, and formulas
               vcat (trans_comment : intersperse
                                       sallyCom
                                       (map sxPretty (tresTrans tr))) <$$>
+              -- needs to come last
               vcat (system_comment : [sxPretty (tresSystem tr)])
     where
       consts = if null (tresConsts tr) then text ";; NONE"

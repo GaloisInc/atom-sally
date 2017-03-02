@@ -37,6 +37,7 @@ data TrConfig = TrConfig
     --   transitions to be generated that aid in
     --   debugging
   , cfgDebug :: Bool
+  , cfgMessageDelay :: Rational
   }
 
 -- | Default configuration
@@ -45,6 +46,7 @@ defaultCfg = TrConfig
   { cfgMFA = NoFaults
   , cfgTopNameSpace = True
   , cfgDebug = False
+  , cfgMessageDelay = 1
   }
 
 -- | Assignment of weights to each fault type

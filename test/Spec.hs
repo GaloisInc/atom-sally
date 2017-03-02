@@ -4,11 +4,9 @@ module Main where
 
 import Data.Int
 import qualified Data.Map.Strict as Map
-import           Control.Monad (void)
 import System.FilePath.Posix
 
 import           Language.Atom hiding (compile)
-import qualified Language.Atom as A
 import Language.Sally
 
 testDir :: FilePath
@@ -63,19 +61,20 @@ atom3 = atom "atom3" $ do
 
   atom "alice" $ do
     done <- bool "done" False
+    cond $ not_ (value done)
     writeChannel cin (Const goodMsgValue)
-    done <== Const True
+    done <== true
 
   atom "bob" $ do
     msg <- int64 "msg" missingMsgValue
     cond $ fullChannel cout
-    msg <== readChannel cout
-    consumeChannel cout
+    v <- readChannel cout
+    msg <== v
 
 -- | A minimal version of atom3, where two agents commicate one message over a
 -- channel. This version has no "done" flags.
---   Property: G((/= atom3!bob!msg -1) => (= atom3!__t 1))
---             F((= atom3!__t 1))
+--   Property: G((/= atom3min!bob!msg -1) => (= atom3min!__t 1))
+--             F((= atom3min!__t 1))
 atom3min :: Atom()
 atom3min = atom "atom3" $ do
 
@@ -94,8 +93,32 @@ atom3min = atom "atom3" $ do
   atom "bob" $ do
     msg <- int64 "msg" missingMsgValue
     cond $ fullChannel cout
-    msg <== readChannel cout
-    consumeChannel cout
+    v <- readChannel cout
+    msg <== v
+
+-- | A periodic version of atom3, where two agents commicate one message over a
+-- channel.
+atom3Per :: Atom()
+atom3Per = atom "atom3Per" $ do
+
+  let
+    -- | Special message values indicating "no message present", and "correct
+    -- (intended) message"
+    missingMsgValue, goodMsgValue  :: MsgType
+    missingMsgValue = -1
+    goodMsgValue    = 1
+    nodeBPeriod     = 3
+
+  (cin, cout) <- channel "aTob" msgType
+
+  atom "alice" $ do
+    writeChannel cin (Const goodMsgValue)
+
+  period nodeBPeriod . atom "bob" $ do
+    msg <- int64 "msg" missingMsgValue
+    cond $ fullChannel cout
+    v <- readChannel cout
+    msg <== v
 
 -- | Three Atoms communicate through two channels
 --
@@ -127,57 +150,52 @@ atom4 = atom "atom4" $ do
     done <- bool "done" False
     msg <- int64 "msg" missingMsgValue
     cond (fullChannel coutA2B)
-    writeChannel cinB2C (readChannel coutA2B :: E MsgType)
-    msg <== readChannel coutA2B
+    v <- readChannel coutA2B
+    writeChannel cinB2C v
+    msg <== v
     done <== Const True
-    consumeChannel coutA2B
 
   atom "nodeC" $ do
     done <- bool "done" False
     msg <- int64 "msg" missingMsgValue
     cond (fullChannel coutB2C)
-    msg <== readChannel coutB2C
+    v <- readChannel coutB2C
+    msg <== v
     done <== Const True
-    consumeChannel coutB2C
 
 -- | Atom setting and using a timer based on the time at which it
 --   received a message.
-
-atom5 :: Atom()
-atom5 = atom "atom5" $ do
-
-  let
-    -- | Special message values indicating "no message present", and "correct
-    -- (intended) message"
-    missingMsgValue, goodMsgValue  :: MsgType
-    missingMsgValue = -1
-    goodMsgValue    = 1
-
-  (cin, cout) <- channel "chan" msgType
-
-  atom "alice" $ do
-    done <- bool "done" False
-    writeChannel cin (Const goodMsgValue)
-    done <== Const True
-
-  atom "bob" $ do
-
-    rxTime <- word64 "rxTime" 0
-
-    atom "recMsg"  $ do  
-      msg <- int64 "msg" missingMsgValue
-      cond $ fullChannel cout
-      msg <== readChannel cout
-      rxTime <== clock
-
-    atom "timerDone" $ do
-      local <- bool "local" False
-      cond (value rxTime + 1000 >. clock)
-      local <== Const True
-    
-compileAtom5 :: IO ()
-compileAtom5 = void $ A.compile (testDir </> "atom5") defaults atom5
-  
+-- atom5 :: Atom()
+-- atom5 = atom "atom5" $ do
+--
+--   let
+--     -- | Special message values indicating "no message present", and "correct
+--     -- (intended) message"
+--     missingMsgValue, goodMsgValue  :: MsgType
+--     missingMsgValue = -1
+--     goodMsgValue    = 1
+--
+--   (cin, cout) <- channel "chan" msgType
+--
+--   atom "alice" $ do
+--     done <- bool "done" False
+--     writeChannel cin (Const goodMsgValue)
+--     done <== Const True
+--
+--   atom "bob" $ do
+--
+--     rxTime <- word64 "rxTime" 0
+--
+--     atom "recMsg"  $ do
+--       msg <- int64 "msg" missingMsgValue
+--       cond $ fullChannel cout
+--       msg <== readChannel cout
+--       rxTime <== clock
+--
+--     atom "timerDone" $ do
+--       local <- bool "local" False
+--       cond (value rxTime + 1000 >. clock)
+--       local <== Const True
 
 -- Configurations --------------------------------------------------------------
 
@@ -214,40 +232,36 @@ testCompile (nm, spec, cfg, q) = do
 suite :: [(String, Atom (), TrConfig, String)]
 suite =
   [ ("A1", atom1, hybridCfg,
-        "(query A1_transition_system (=> A1_mfa_formula (<= 0 A1!atom1!x)))")
+        "(query A1_transition_system (=> A1_assumptions (<= 0 A1!atom1!x)))")
   , ("A1b", atom1, defSpecCfg,
-        "(query A1b_transition_system (=> A1b_mfa_formula (<= 0 A1b!atom1!x)))")
+        "(query A1b_transition_system (=> A1b_assumptions (<= 0 A1b!atom1!x)))")
   , ("A2", atom2, hybridCfg,
-        "(query A2_transition_system (=> A2_mfa_formula (=> A2!atom2!alice!a A2!atom2!flag)))")
+        "(query A2_transition_system (=> A2_assumptions (=> A2!atom2!alice!a A2!atom2!flag)))")
   , ("A2b", atom2, fixedCfg,
-        "(query A2b_transition_system (=> A2b_mfa_formula (=> A2b!atom2!alice!a A2b!atom2!flag)))")
+        "(query A2b_transition_system (=> A2b_assumptions (=> A2b!atom2!alice!a A2b!atom2!flag)))")
   , ("A3", atom3, hybridCfg,
-        unwords [ "(query A3_transition_system"
-                , "  (=> A3_mfa_formula"
-                , "    (=> (not (= A3!atom3!bob!msg (-1))) A3!atom3!alice!done)))"])
+        unlines [ "(query A3_transition_system"
+                , "    (=> (not (= A3!atom3!bob!msg (-1))) A3!atom3!alice!done))"])
     -- different config from A3
   , ("A3b", atom3, defSpecCfg,
-        unwords [ "(query A3b_transition_system"
-                , "  (=> A3b_mfa_formula"
-                , "    (=> (not (= A3b!atom3!bob!msg (-1))) A3b!atom3!alice!done)))"])
+        unlines [ "(query A3b_transition_system"
+                , "    (=> (not (= A3b!atom3!bob!msg (-1))) A3b!atom3!alice!done))"])
     -- fewer state vars & different property
   , ("A3min", atom3min, defSpecCfg,
-        unwords [ "(query A3min_transition_system"
-                , "  (=> A3min_mfa_formula"
-                , "    (=> (not (= A3min!atom3!bob!msg (-1))) (>= A3min!__t 1))))"])
+        unlines [ "(query A3min_transition_system"
+                , "    (=> (not (= A3min!atom3!bob!msg (-1))) (>= A3min!__t 1)))"])
+    -- receiver has a long period
+  , ("A3per", atom3Per, defSpecCfg,
+        unlines [ "(query A3per_transition_system"
+                , "    (=> (not (= A3per!atom3Per!bob!msg (-1))) (>= A3per!__t 1)))"])
   , ("A4", atom4, defSpecCfg,
-        unwords [ "(query A4_transition_system"
-                , "  (=> A4_mfa_formula"
-                , "    (=> A4!atom4!nodeC!done (= A4!atom4!nodeC!msg 1))))"
+        unlines [ "(query A4_transition_system"
+                , "    (=> A4!atom4!nodeC!done (= A4!atom4!nodeC!msg 1)))"
                 , "\n\n"
                 , "(query A4_transition_system"
-                , "  (=> A4_mfa_formula"
-                , "    (=> A4!atom4!nodeC!done (= A4!__t 2))))"])
--- Need to add clocks to the language first		
---  , ("A5", atom5, defSpecCfg, "")
+                , "    (=> A4!atom4!nodeC!done (= A4!__t 2)))"])
   ]
 
 main :: IO ()
 main = do
   mapM_ testCompile suite
-  compileAtom5

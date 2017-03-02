@@ -31,6 +31,7 @@ module Language.Sally.Expr (
   , geqExpr
   , muxExpr
   , andExprs
+  , andPreds
   , orExprs
   , varExpr
   , varExpr'

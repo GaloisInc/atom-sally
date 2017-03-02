@@ -16,9 +16,8 @@ module Language.Sally.Translation (
   , TrConfig(..)
 ) where
 
-
 import           Control.Arrow (second, (***))
-import           Data.Foldable (foldl')
+import           Data.Foldable (find, foldl')
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes, fromMaybe)
 import           Data.Sequence ((><), (|>))
@@ -155,6 +154,7 @@ trState conf name sh rules chans = SallyState (mkStateTypeName name) vars invars
                                         else go Nothing sh)
            ++ faultStatusVars
            ++ clockVars
+           ++ periodPhaseVars
            ++ debugVars
 
     -- Recursive helper function to traverse the state hierarchy
@@ -169,23 +169,34 @@ trState conf name sh rules chans = SallyState (mkStateTypeName name) vars invars
       in [(chanVar, trType t), (chanTime, SReal)]
     go _prefix (AEla.StateArray _ _) = error "atom-sally does not yet support arrays"
 
-    -- Declare one (channel typed) input variable per CHANNEL, used to
-    -- provide non-deterministic values on faulty channels.
-    synthInvars :: [(Name, SallyBaseType)]
+    -- Declare input variables:
+    --
+    -- a) one (channel typed) input variable per CHANNEL, used to
+    --    provide non-deterministic values on faulty channels.
+    -- b) two input variables, one real, one integral, used to set message
+    --    receipt times at the correct preiod and phase for each rule
+    --    (transition). These are constrained by global assumptions.
     synthInvars =
-      [ ( mkFaultChanValueName (uglyHack . AEla.cinfoName $ c)
-        , trType (AEla.cinfoType c))
-      | c <- chans ]
+      let cnm = AEla.cinfoName
+          ctp = trType . AEla.cinfoType in
+      concatMap (\c -> [ ( mkFaultChanValueName (uglyHack . cnm $ c), ctp $ c)
+                         -- others?
+                       ]
+                ) chans
 
     -- Declare one boolean state variable per NODE, these are partially
     -- constrained in the init block so that they remain at a constant value
-    -- between 'fauiltTypeMin' and 'faultTypeMax' throughout a trace.
-    faultStatusVars :: [(Name, SallyBaseType)]
+    -- between 'faultTypeMin' and 'faultTypeMax' throughout a trace.
     faultStatusVars = [ (mkFaultNodeName name (AEla.ruleId r), SInt)
                       | r@(AEla.Rule{}) <- rules ]
 
-    clockVars :: [(Name, SallyBaseType)]
-    clockVars = [ (mkClockTimeName name, SReal) ]
+    clockVars = [(mkClockTimeName name, SReal)]
+
+    periodPhaseVars =
+      concatMap (\c -> [ (mkDeltaNameC c, SReal)
+                       , (mkMultNameC c, SInt)
+                       ]
+                ) chans
 
     -- debug output consists of one variable: __last_transition  which
     -- indicates the transition # (aka rule Id) to be taken last
@@ -203,6 +214,7 @@ trInit conf name sh rules = SallyStateFormula (mkInitStateName name)
   where
     spred  = simplifyAnds $ SPAnd (Seq.fromList [ nodeInit
                                                 , clockInit
+                                                , assumptionsInit
                                                 , debugInit
                                                 , faultFlagConstraints
                                                 ])
@@ -225,6 +237,7 @@ trInit conf name sh rules = SallyStateFormula (mkInitStateName name)
     debugInit = if cfgDebug conf
                    then SPEq (varExpr' (mkLastTransName name)) initialLastTrans
                    else SPConst True
+    assumptionsInit = SPExpr (varExpr' (mkAssumptionsFormulaName name))
 
     -- constrain node-fault type to values defined in "FaultModel"
     -- In the generated Sally model, 0 = NonFaulty, 1 = ManifestFaulty, etc..
@@ -253,8 +266,16 @@ trFormulas :: TrConfig
         -> [AEla.Rule]
         -> [AEla.ChanInfo]
         -> [SallyStateFormula]
-trFormulas conf name _sh rules _chans = [mfaFormula]
-  where
+trFormulas conf name _sh rules chans = masterList ++ [masterFormula]
+  where                                -- ^ order matters here
+    -- Conjunction of all the global assumptions
+    masterList = [mfaFormula, periodPhaseFormula, lemmasFormula]
+    masterPred = SPAnd (Seq.fromList fList)
+      where fList = map (SPExpr . varExpr' . sfName) masterList
+    masterFormula = SallyStateFormula (mkAssumptionsFormulaName name)
+                                      (mkStateTypeName name)
+                                      masterPred
+
     -- Formulas which constraint the fault model
     --
     mfaFormula = SallyStateFormula (mkMFAFormulaName name)
@@ -265,9 +286,7 @@ trFormulas conf name _sh rules _chans = [mfaFormula]
       NoFaults           -> fixedFaultsPred Map.empty
       HybridFaults ws wc -> weightedFaultsPred ws wc
       FixedFaults m      -> fixedFaultsPred m
-
     -- Hybrid fault model case
-    --
     weightedFaultsPred ws wc = SPExpr $ leqExpr (sumExpr ws wc) (intExpr numNodes)
     fts = [minBound..maxBound] :: [FaultType]  -- list of possible fault types
     nodeFaultE r@AEla.Rule{} = varExpr' (mkFaultNodeName name (AEla.ruleId r))
@@ -280,9 +299,7 @@ trFormulas conf name _sh rules _chans = [mfaFormula]
       where wgt = fromMaybe 0 $ Map.lookup f ws
             cnt = countExpr (intExpr (fromEnum f)) faultStatusVars
     sumExpr ws wc = constFold $ addExpr (intExpr wc) (foldl' (fn ws) zeroExpr fts)
-
     -- Fixed fault mapping case
-    --
     fixedFaultsPred mp =
       case checkNodeNames mp of
         Nothing -> let ffConstraints = map (uncurry SPEq) (nodeFs mp)
@@ -291,13 +308,11 @@ trFormulas conf name _sh rules _chans = [mfaFormula]
           error . unwords $ [ "trFormulas:\n  Names given in the FIXED FAULT"
                             , "MAPPING do not correspond to\n  system"
                             , "nodes: " ] ++ map spPrint badNames
-
     checkNodeNames mp =
       let nms = map nodeNm realRules
           badNames = filter (\k -> not (k `elem` nms)) (Map.keys mp)
       in if null badNames then Nothing
                           else Just badNames
-
     nodeNm r@AEla.Rule{} = mkNodeName name (uglyHack (AEla.ruleName r))
     nodeNm _        = error "trFormulas: nodeName: no name for non-Rule"
     lkFault r mp = intExpr
@@ -306,12 +321,61 @@ trFormulas conf name _sh rules _chans = [mfaFormula]
                  $ Map.lookup (nodeNm r) mp
     nodeFs mp = [(nodeFaultE r, lkFault r mp) | r <- realRules]
     -- TODO emit an error if 'mp' contains names that are not node names
-
     realRules = [r | r@AEla.Rule{} <- rules]
 
-    -- Other formulas
+    -- Formulas which constrain the period and phase calculations
     --
-    -- TODO
+    periodPhaseFormula = SallyStateFormula (mkPeriodPhaseFormulaName name)
+                                           (mkStateTypeName name)
+                                           periodPhasePred
+    periodPhasePred =
+      let clkE   = varExpr' . mkClockTimeName $ name
+          delayE = mkDelayExpr conf name
+          delE c = varExpr' . mkDeltaNameC $ c
+          enE c  = varExpr' . mkMultNameC $ c
+          -- lookup the phase of a rule
+          lkPha rid = case find ((== rid) . AEla.ruleId) rules of
+            Nothing -> error $ "Translation: trFormulas: cannot resolve ruleId "
+                            ++ show rid
+            Just r -> case AEla.rulePhase r of
+                        AEla.MinPhase x -> intExpr x
+                        AEla.ExactPhase x -> intExpr x
+          -- lookup the period of a rule
+          lkPer rid = case find ((== rid) . AEla.ruleId) rules of
+            Nothing -> error $ "Translation: trFormulas: cannot resolve ruleId "
+                            ++ show rid
+            Just r -> intExpr (AEla.rulePeriod r)
+          noRecvErr c = error $ "trFormulas: periodPhasePred: channel "
+                             ++ show (AEla.cinfoName c) ++ " has no receiver."
+          getPerE c = case AEla.cinfoRecv c of
+            Nothing -> noRecvErr c
+            Just rcv -> lkPer rcv
+          getPhaE c = case AEla.cinfoRecv c of
+            Nothing -> noRecvErr c
+            Just rcv -> lkPha rcv
+
+          perPlusPhaseE c = addExpr (multExpr (getPerE c) (enE c)) (getPhaE c)
+          -- delta, N constraint for one rule/transition
+          constraintE c =
+            andPreds [ SPEq (addExpr (addExpr clkE delayE) (delE c)) (perPlusPhaseE c)
+                     , SPLEq zeroExpr (delE c)    -- 0 <= delta
+                     , SPLt (delE c) (getPerE c)  -- delta < Period
+                     ]
+      in simplifyAnds . SPAnd . Seq.fromList . map constraintE $ chans
+
+    -- Lemmas that are automatically generated
+    --
+    lemmasFormula = SallyStateFormula (mkLemmasFormulaName name)
+                                      (mkStateTypeName name)
+                                      lemmasPred
+
+    lemmasPred =
+      let clkE = varExpr' (mkClockTimeName name)
+          nonNegTime = SPLEq zeroExpr clkE  -- 0 <= global time
+      in simplifyAnds . SPAnd . Seq.fromList $
+           [ nonNegTime
+             -- TODO: add more lemmas
+           ]
 
 
 -- | Translate Atom 'Rule's into 'SallyTransition's. One transition is
@@ -346,8 +410,10 @@ trRules conf name st umap chans rules = (catMaybes $ map trRule rules)
                                  []
                                  (masterPred)
         minorTrans = map (SPExpr . SEVar . varFromName . mkTName) rules
-        masterPred = simplifyOrs $ SPOr (   Seq.fromList minorTrans
-                                         |> SPExpr (varExpr' (mkClockTransName name)))
+        nodeTrans = simplifyOrs $ SPOr (   Seq.fromList minorTrans
+                                        |> SPExpr (varExpr' (mkClockTransName name)))
+        invariant = SPExpr . varExpr' . nextName . mkAssumptionsFormulaName $ name
+        masterPred = SPAnd . Seq.fromList $ [invariant, nodeTrans]
 
         clock = SallyTransition (mkClockTransName name)
                                 (mkStateTypeName name)
@@ -362,19 +428,25 @@ trRules conf name st umap chans rules = (catMaybes $ map trRule rules)
                   in SPAnd $ (Seq.empty
                                |> SPLt (mkClockStateExpr  name) m
                                |> SPEq (mkClockStateExpr' name) m
-                               |> if cfgDebug conf  -- mark a clock transition
+                               |> (if cfgDebug conf  -- mark a clock transition
                                      then SPEq lastTransE' clockLastTrans
-                                     else SPConst True)
+                                     else SPConst True))
                              >< clkLeftovers
              else boolPred False  -- case of no channels
         lastTransE' = varExpr' . nextName . mkLastTransName $ name
         -- variables updated by clock
-        clkUsed = mkClockTimeName name : if cfgDebug conf
-                                            then [mkLastTransName name]
-                                            else []
+        -- TODO: this leftovers mechanism is really clumsy. Whenever a new
+        -- state variable is added the leftovers in every transition have to
+        -- be modified...
+        periodPhaseUsed = [mkDeltaNameC c | c <- chans ]
+                       ++ [mkMultNameC c | c <- chans ]
+        clkUsed = [mkClockTimeName name]
+               ++ (if cfgDebug conf then [mkLastTransName name] else [])
+               ++ periodPhaseUsed
         clkLeftovers = Seq.fromList $ map handleLeftovers (stVars \\ clkUsed)
         calTimes = map ( varExpr' . stateName . snd . mkChanStateNames
-                       . uglyHack . AEla.cinfoName) chans
+                       . uglyHack . AEla.cinfoName
+                       ) chans
 
         -- predicate that makes a variable stutter
         handleLeftovers n = SPEq (varExpr' (nextName n))
@@ -434,13 +506,18 @@ trRules conf name st umap chans rules = (catMaybes $ map trRule rules)
                     -- propagate the rule's enable condition to each channel
                     -- write
                     enableExpr = SEVar (lk (AEla.ruleEnable r))
-                    newTimeExpr = muxExpr enableExpr
-                                          (addExpr globTimeExpr messageDelay)
-                                          calTimeE
+                    messageDelay = realExpr (cfgMessageDelay conf)
+                    -- timeout is current global time + message delay +
+                    -- exactly enough time (delta) to get to the receiver's
+                    -- next execution time (ala. period and phase)
+                    delE = varExpr' . stateName . mkDeltaName . uglyHack
+                         . ACTyp.chanName $ cin
+                    laterTime = addExpr (addExpr globTimeExpr messageDelay) delE
+                    newTimeExpr = muxExpr enableExpr laterTime calTimeE
                 in SPAnd $ Seq.empty
                              |> SPEq calValE' (SEVar (lk h))  -- set chan value
                              |> SPEq calTimeE' newTimeExpr    -- set chan time
-              -- translate channel consumes into a single assignement to the
+              -- translate channel reads into consumes in a single assignement to the
               -- calendar entry time
               handleChanConsume cout =
                 let calTimeE  = varExpr' . stateName . snd . chanNames $ cout
@@ -452,10 +529,11 @@ trRules conf name st umap chans rules = (catMaybes $ map trRule rules)
               stVarsUsed = map (vName . fst) (AEla.ruleAssigns r)
                         ++ map (fst . chanNames . fst) (AEla.ruleChanWrite r)
                         ++ map (snd . chanNames . fst) (AEla.ruleChanWrite r)
-                        ++ map (snd . chanNames) (AEla.ruleChanConsume r)
-                        ++ if cfgDebug conf
+                        ++ map (snd . chanNames) (AEla.ruleChanRead r)
+                        ++ (if cfgDebug conf
                               then [mkLastTransName name]
-                              else []
+                              else [])
+                        ++ periodPhaseUsed
 
               -- leftovers are vars not explicitly mentioned in the atom body,
               -- we need to make sure they stutter using 'handleLeftovers'
@@ -467,7 +545,7 @@ trRules conf name st umap chans rules = (catMaybes $ map trRule rules)
 
               ops = map handleAssign (AEla.ruleAssigns r)
                  ++ map handleChanWrite (AEla.ruleChanWrite r)
-                 ++ map handleChanConsume (AEla.ruleChanConsume r)
+                 ++ map handleChanConsume (AEla.ruleChanRead r)
                  ++ map handleLeftovers leftovers
                  ++ debugOps
 
@@ -475,8 +553,7 @@ trRules conf name st umap chans rules = (catMaybes $ map trRule rules)
         mkPred _ = error "impossible! assert or coverage rule found in mkPred"
 
 
--- Translate Expressions -------------------------------------------------------
-
+-- | Translate Expressions
 trUExpr :: Name                    -- ^ Atom name
         -> AUe.UeMap               -- ^ untyped expression map
         -> [AEla.ChanInfo]         -- ^ channel meta-data for all channels in system
@@ -551,11 +628,12 @@ mkFaultCheck name chans nm = muxExpr checkFault calVal faultVal
         faultVal = varExpr' . inputName . mkFaultChanValueName . uglyHack $ nm
         calVal   = varExpr' . stateName . fst . mkChanStateNames . uglyHack $ nm
         srcId    = case filter (\c -> AEla.cinfoName c == nm) chans of
-                     [c] -> AEla.cinfoSrc c
-                     [] -> error ( "mkFaultCheck: found chan ref with no ChanInfo:\n"
-                                ++ "  chans: " ++ show chans ++ "\n"
-                                ++ "  name: " ++ show nm ++ "\n")
-                     _  -> error "mkFaultCheck: found chan ref >= 1 ChanInfo"
+                     [c] -> fromMaybe (error "mkFaultCheck: channel has no receiver")
+                                      (AEla.cinfoSrc c)
+                     []  -> error ( "mkFaultCheck: found chan ref with no ChanInfo:\n"
+                                 ++ "  chans: " ++ show chans ++ "\n"
+                                 ++ "  name: " ++ show nm ++ "\n")
+                     _   -> error "mkFaultCheck: found chan ref >= 1 ChanInfo"
 
 
 -- | Construct a predicate that checks the given time for equality with the
@@ -583,10 +661,6 @@ initialLastTrans = SELit $ SConstInt (-2)
 -- | Value for the clock transition in '__last_transition'.
 clockLastTrans :: SallyExpr
 clockLastTrans = SELit $ SConstInt (-1)
-
--- | Message delay. TODO allow this to be less constrained.
-messageDelay :: SallyExpr
-messageDelay = SELit $ SConstReal 1
 
 
 -- Name Generation Utilities ---------------------------------------------------
@@ -623,6 +697,22 @@ mkFaultChanValueName :: Name -> Name
 mkFaultChanValueName cnm =
   cnm `bangNames` "fault"
 
+-- | cname --> @cname!delta@
+mkDeltaName :: Name -> Name
+mkDeltaName cnm =
+  cnm `bangNames` "delta"
+
+mkDeltaNameC :: AEla.ChanInfo -> Name
+mkDeltaNameC = mkDeltaName . uglyHack . AEla.cinfoName
+
+-- | cname --> @cname!multiplier@
+mkMultName :: Name -> Name
+mkMultName cnm =
+  cnm `bangNames` "multiplier"
+
+mkMultNameC :: AEla.ChanInfo -> Name
+mkMultNameC = mkMultName . uglyHack . AEla.cinfoName
+
 -- | name1 name2 --> @name1!name2@
 mkNodeName :: Name -> Name -> Name
 mkNodeName _nm = id
@@ -645,8 +735,17 @@ trExprRef i = varFromName $ nameFromT "temp" `bangNames` nameFromS (show i)
 mkTSystemName :: Name -> Name
 mkTSystemName = (`scoreNames` "transition_system")
 
+mkAssumptionsFormulaName :: Name -> Name
+mkAssumptionsFormulaName = (`scoreNames` "assumptions")
+
 mkMFAFormulaName :: Name -> Name
 mkMFAFormulaName = (`scoreNames` "mfa_formula")
+
+mkPeriodPhaseFormulaName :: Name -> Name
+mkPeriodPhaseFormulaName = (`scoreNames` "period_phase_formula")
+
+mkLemmasFormulaName :: Name -> Name
+mkLemmasFormulaName = (`scoreNames` "lemmas")
 
 mkClockTimeName :: Name -> Name
 mkClockTimeName nm = nm `bangNames` "__t"
@@ -658,6 +757,11 @@ mkClockStateExpr = varExpr' . stateName . mkClockTimeName
 -- | next clock state
 mkClockStateExpr' :: Name -> SallyExpr
 mkClockStateExpr' = varExpr' . nextName . mkClockTimeName
+
+-- | Construct the expression representing the global constant message delay.
+-- TODO: make this a declared constant in the file using the `name` namespace
+mkDelayExpr :: TrConfig -> Name -> SallyExpr
+mkDelayExpr conf _name = realExpr (cfgMessageDelay conf)
 
 -- | s/\./!/g
 uglyHack :: String -> Name
