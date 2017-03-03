@@ -3,11 +3,13 @@
 module Main where
 import Data.Int
 import qualified Data.Map.Strict as Map
-import           Control.Monad (void)
 import System.FilePath.Posix
 import           Language.Atom hiding (compile)
 import qualified Language.Atom as A
 import Language.Sally
+
+
+-- Constants -------------------------------------------------------------------
 
 testDir :: FilePath
 testDir = "test"
@@ -17,322 +19,205 @@ type MsgType = Int64
 msgType :: Type
 msgType = Int64  -- Atom 'Type' value
 
--- Test Atoms -----------------------------------------------------------
-
-
--- | 'x' starts at 0, increases each tick up to 10
---   Property: G(atom1!x >= 0)
-atom1 :: Atom ()
-atom1 = atom "atom1" $ do
-  x <- int8  "x" 0
-  cond $ (value x) <. 10
-  x <== (value x) + 1
-
-
--- | Two Atoms communicate through a flag
---   Property: G(atom2!alice!a => atom2!flag)
-atom2 :: Atom()
-atom2 = atom "atom2" $ do
-  f <- bool "flag" False
-
-  atom "alice" $ do
-    a <- bool "a" False
-    cond $ (value f)
-    a <== Const True
-
-  atom "bob" $ do
-    f <== Const True
-
-
--- | Two Atoms communicate through a *channel*
---   Property: G((/= atom3!bob!msg -1) => atom3!alice!done)
---             F((/= atom3!bob!msg -1))
-atom3 :: Atom()
-atom3 = atom "atom3" $ do
-
-  let
-    -- | Special message values indicating "no message present", and "correct
-    -- (intended) message"
-    missingMsgValue, goodMsgValue  :: MsgType
-    missingMsgValue = -1
-    goodMsgValue    = 1
-
-  (cin, cout) <- channel "aTob" msgType
-
-  atom "alice" $ do
-    done <- bool "done" False
-    writeChannel cin (Const goodMsgValue)
-    done <== Const True
-
-  atom "bob" $ do
-    msg <- int64 "msg" missingMsgValue
-    cond $ fullChannel cout
-    msg <== readChannel cout
-    consumeChannel cout
-
--- | A minimal version of atom3, where two agents commicate one message over a
--- channel. This version has no "done" flags.
---   Property: G((/= atom3!bob!msg -1) => (= atom3!__t 1))
---             F((= atom3!__t 1))
-atom3min :: Atom()
-atom3min = atom "atom3" $ do
-
-  let
-    -- | Special message values indicating "no message present", and "correct
-    -- (intended) message"
-    missingMsgValue, goodMsgValue  :: MsgType
-    missingMsgValue = -1
-    goodMsgValue    = 1
-
-  (cin, cout) <- channel "aTob" msgType
-
-  atom "alice" $ do
-    writeChannel cin (Const goodMsgValue)
-
-  atom "bob" $ do
-    msg <- int64 "msg" missingMsgValue
-    cond $ fullChannel cout
-    msg <== readChannel cout
-    consumeChannel cout
-
--- | Three Atoms communicate through two channels
---
---   Property: node C is done implies that node C's 'msg' variable equals 1
---   ('goodMsgValue'). Futhermore, node C is done implies that the global time
---   is equal to 2.
---
---   (=> A4!atom4!nodeC!done (and (= A4!atom4!nodeC!msg 1)
---                                (= A4!__t 2)))
-atom4 :: Atom()
-atom4 = atom "atom4" $ do
-
-  let
-    -- | Special message values indicating "no message present", and "correct
-    -- (intended) message"
-    missingMsgValue, goodMsgValue  :: MsgType
-    missingMsgValue = -1
-    goodMsgValue    = 1
-
-  (cinA2B, coutA2B) <- channel "a2b" msgType
-  (cinB2C, coutB2C) <- channel "b2c" msgType
-
-  atom "nodeA" $ do
-    done <- bool "done" False
-    writeChannel cinA2B (Const goodMsgValue)
-    done <== Const True
-
-  atom "nodeB" $ do
-    done <- bool "done" False
-    msg <- int64 "msg" missingMsgValue
-    cond (fullChannel coutA2B)
-    writeChannel cinB2C (readChannel coutA2B :: E MsgType)
-    msg <== readChannel coutA2B
-    done <== Const True
-    consumeChannel coutA2B
-
-  atom "nodeC" $ do
-    done <- bool "done" False
-    msg <- int64 "msg" missingMsgValue
-    cond (fullChannel coutB2C)
-    msg <== readChannel coutB2C
-    done <== Const True
-    consumeChannel coutB2C
-
--- | Atom setting and using a timer based on the time at which it
---   received a message.
-
-atom5 :: Atom()
-atom5 = atom "atom5" $ do
-
-  let
-    -- | Special message values indicating "no message present", and "correct
-    -- (intended) message"
-    missingMsgValue, goodMsgValue  :: MsgType
-    missingMsgValue = -1
-    goodMsgValue    = 1
-
-  (cin, cout) <- channel "chan" msgType
-
-  atom "alice" $ do
-    done <- bool "done" False
-    writeChannel cin (Const goodMsgValue)
-    probe "alice.done" (value done)
-  
-    done <== Const True
-
-  atom "bob" $ do
-
-    rxTime <- word64 "rxTime" 0
-
-    atom "recMsg"  $ do  
-      msg <- int64 "msg" missingMsgValue
-      cond $ fullChannel cout
-      msg <== readChannel cout
-  
-      probe "bob.recMsg" (value msg)
-      rxTime <== clock
-
-    atom "timerDone" $ do
-      local <- bool "local" False
-      cond (value rxTime + 1000 >. clock)
-      local <== Const True
-
-    printAllProbes
-
- 
-
+-- Button press processes period
 buttonPeriod :: Int
 buttonPeriod = 10
 
-observerPeriod :: Int
-observerPeriod = 1
-
+-- COM and MON period
 procPeriod :: Int
 procPeriod = 2
 
 
-atom_wbs :: Atom()
+-- Single Channel Wheel Brake Example ------------------------------------------
+
+atom_wbs :: Atom ()
 atom_wbs = atom "atom_wbs" $ do
- --let zeroC  = Const zero
- -- let twoC   = Const two
- let threeC = Const three
-   
-   -- button press to com and mon
- (bpinc, bpComout) <- channel "bpcout" Bool
- (bpinm, bpMonout) <- channel "bpmout" Bool
 
- -- com to mon and mon to com state echange
- -- transfers state of 
--- (mtocin, mtocout) <- channel "montocom" Bool
- (ctomin, ctomout) <- channel "comtomon" Bool
+  -- Declare two lanes
+  laneIns <- mapM mkLane [True, False]  -- high/low priority
 
+  -- self loop to initialize button
+  (initButtonIn, initButtonOut) <- channel "initButton" Bool
+  atom "initTheButton" $ do
+    done <- bool "done" False
+    cond $ not_ (value done)
+    writeChannel initButtonIn (Const True)
+    done <== Const True
 
- (bcin, bcout) <- channel "chanbo" Int64
- (ccin, ccout) <- channel "chanco" Int64
- (mcin, mcout) <- channel "chanmo" Int64
+  -- (cin, cout) <- channel "button_chan" msgType
+  period buttonPeriod . atom "button" $ do
+    count <- var "count" zero      -- button's frame count
+    bs <- bool "bs" False          -- button state
+    cond $ fullChannel initButtonOut
 
--- (cin, cout) <- channel "button_chan" msgType
- period buttonPeriod . atom "button" $ do
-    count <- var "count" zero    -- declare a local variable
-    bs <- bool "bs" False
-
-   -- autoMode <- bool "autoMode" False
     probe "boolbutton.count" (value count)
     bs <== mux (value bs ==. Const True) (Const False) (Const True)
-    writeChannel bpinc (value bs) -- channel for command button input
-    writeChannel bpinm (value bs) -- channel for monitor button input
-    writeChannel bcin (value count)  -- put 'count' on the channel for observer
-    incr count 
 
-                       -- increment count (order w/ writeChannel
-                                -- doesn't matter
- period procPeriod . atom "command" $ do
-    framecount <- var "framecount" zero 
-    bs <- var  "bs"  False
-    prevbs <- var  "prevbs"  False
-    cautoMode <- var "cautoMode" False
-      -- declare a local variable
+    mapM_ (\(a, b, c) -> do
+      writeChannel a (value bs) -- channel for command button input
+      writeChannel b (value bs) -- channel for monitor button input
+      writeChannel c (value count))  -- send 'count' to observer
+      laneIns
+
+    incr count
+
+    writeChannel initButtonIn (Const True)  -- value doesn't matter
+
+  printAllProbes
+
+
+-- Command / Monitor "Lane" --------------------------------------------
+
+pName :: Bool -> String -> String
+pName b nm = nm ++ if b then "_high" else "_low"
+
+mkLane :: Bool
+       -> Atom (ChanInput, ChanInput, ChanInput)
+mkLane pp = atom (pName pp "lane") $ do
+
+  let probeP nm e = probe (pName pp nm) e
+
+  (btcIn, btcOut) <- channel (pName True "btc") Bool  -- button to COM
+  (btmIn, btmOut) <- channel (pName True "btm") Bool  -- button to MON
+  (btoIn, btoOut) <- channel (pName True "bto") Bool  -- button to OBS
+
+  -- com to mon state exchange
+  (ctmIn, ctmOut) <- channel "ctm" Bool
+  (ctoIn, ctoOut) <- channel "cto" Int64
+  (mtoIn, mtoOut) <- channel "mto" Int64
+
+  -- self loop to initialize button
+  (initCOMIn, initCOMOut) <- channel "initCOM" Bool
+  atom "initTheCOM" $ do
+    done <- bool "done" False
+    cond $ not_ (value done)
+    writeChannel initCOMIn (Const True)
+    done <== Const True
+
+  -- COM node
+  period procPeriod . atom "command" $ do
+    bs         <- var "bs" False         -- observered button value
+    prevbs     <- var "prevbs" False     -- previous button value
+    framecount <- var "framecount" zero
+    cautoMode  <- var "cautoMode" False
+    cond $ fullChannel initCOMOut
+
+    incr framecount
     prevbs <== value bs
-    writeChannel ccin (value framecount)  -- put 'count' on the channel
-    incr framecount 
-    writeChannel ctomin (value cautoMode)
-    probe "command.autoMode" (value cautoMode)
-    
+    -- detect a rising edge in 'bs'
+    cautoMode <== mux ((value bs ==. Const True) &&.
+                       (value prevbs ==. Const False))
+                      (not_ (value cautoMode))
+                      (value cautoMode)
+    writeChannel ctoIn (value framecount)  -- send 'framecount' to observer
+    writeChannel ctmIn (value cautoMode)   -- send 'cautoMode' to MON
+
+    writeChannel initCOMIn (Const True)     -- kick self
+    probeP "command.autoMode" (value cautoMode)
 
     atom "wait_for_button_press" $ do
-      cond $ fullChannel bpComout
-      bs <== readChannel bpComout
-      probe "command.button_pressed" (value bs)
-      cautoMode <== mux ((value bs ==. Const True) &&. (value prevbs /=. Const False))
-                       (not_ (value cautoMode))
-                       (value cautoMode)
-      consumeChannel bpComout
+      cond $ fullChannel btcOut
+      v <- readChannel btcOut
+      bs <== v
+      probeP "command.button_pressed" (value bs)
 
-      
- 
- period procPeriod . atom "monitor" $ do
-    framecount <- var "count" zero    -- declare a local variable
-    bs <- var  "bs"  False
-    prevbs <- var "prevbs" False
-    mautoMode <- var "mautoMode" False
-    xSideAutoMode <- var "autoMode" False
+  -- self loop to initialize monitor
+  (initMONIn, initMONOut) <- channel "initMON" Bool
+  atom "initTheMON" $ do
+    done <- bool "done" False
+    cond $ not_ (value done)
+    writeChannel initMONIn (Const True)
+    done <== Const True
+
+  -- MON node
+  period procPeriod . atom "monitor" $ do
+    framecount            <- var "count" zero
+    bs                    <- var "bs"  False
+    prevbs                <- var "prevbs" False
+    mautoMode             <- var "mautoMode" False
+    xSideAutoMode         <- var "autoMode" False
     agreementFailureCount <- var "agreementFailureCount" zero
-    agreementFailure <- var "agreementFailure" False
-    
+    agreementFailure      <- var "agreementFailure" False
+    cond $ fullChannel initMONOut
+
+    incr framecount
     prevbs <== value bs
-    writeChannel mcin (value framecount)  -- put 'count' on the channel
-    incr framecount 
-  --  writeChannel mtocin (value autoMode)
-    probe "monitor.autoMode" (value mautoMode)
-    mautoMode <== mux ((value bs ==. Const True) &&. (value prevbs /=. Const False))
-                       (not_ (value mautoMode))
-                       (value mautoMode)
+    -- detect rising edge
+    mautoMode <== mux ((value bs ==. Const True) &&.
+                       (value prevbs ==. Const False))
+                      (not_ (value mautoMode))
+                      (value mautoMode)
+    writeChannel mtoIn (value framecount)  -- send 'framecount' to observer
+    writeChannel initCOMIn (Const True)   -- kick self
+    probeP "monitor.autoMode" (value mautoMode)
+    probeP "monitor.agreementFailureCount" (value agreementFailureCount)
+    probeP "monitor.agreementFailure" (value agreementFailure)
 
     atom "wait_for_button_press" $ do
-      cond $ fullChannel bpMonout
-      bs <== readChannel bpMonout
-      probe "monitor.button_pressed" (value bs)
-      consumeChannel bpMonout
-    
-    atom "wait_x_side_autoMode" $ do
-      cond $ fullChannel ctomout
-      xSideAutoMode <== readChannel ctomout
-      consumeChannel ctomout
-      probe "monitor.XsideAutoMode=" (value xSideAutoMode)
-      
-    atom "mon_agreement" $ do
-      cond $ value mautoMode /=. value xSideAutoMode
-      incr agreementFailureCount
+      cond $ fullChannel btmOut
+      v <- readChannel btmOut
+      bs <== v
+      probeP "monitor.button_pressed" (value bs)
 
-    atom "mon_agreement_count" $ do 
-      cond $ value agreementFailureCount ==. threeC
+    atom "wait_x_side_autoMode" $ do
+      cond $ fullChannel ctmOut
+      v <- readChannel ctmOut
+      xSideAutoMode <== v
+      probeP "monitor.XsideAutoMode" (value xSideAutoMode)
+
+    atom "mon_agreement" $ do
+      agreementFailureCount <==
+        mux (value mautoMode /=. value xSideAutoMode)
+            (Const one + value agreementFailureCount)
+            (Const zero)
+      -- cond $ value mautoMode /=. value xSideAutoMode
+      -- incr agreementFailureCount
+
+    atom "mon_agreement_count" $ do
+      cond $ value agreementFailureCount ==. Const three
       agreementFailure <== Const True
 
 
-                       -- increment count (order w/ writeChannel
- 
- period observerPeriod . atom "observer" $ do
-    bcount <- var "bcount" zero 
-    ccount <- var "ccount" zero 
-    mcount <- var "mcount" zero 
-    probe "observer.bcount" (value bcount)
-    probe "observer.com_framecount" (value ccount)
-    probe "observer.mon_framecount" (value mcount)
- 
+  -- | Internal Observer Node - run every tick and read values from the
+  -- observer channels
+  atom "observer" $ do
+    bcount <- var "bcount" zero
+    ccount <- var "ccount" zero
+    mcount <- var "mcount" zero
+    probeP "observer.bcount" (value bcount)
+    probeP "observer.com_framecount" (value ccount)
+    probeP "observer.mon_framecount" (value mcount)
+
     atom "wait_for_button_frame" $ do
-     cond $ fullChannel bcout
-     bcount <== readChannel bcout
-     consumeChannel bcout
-    
+     cond $ fullChannel btoOut
+     v <- readChannel btoOut
+     bcount <== v
+
     atom "wait_for_com_frame" $ do
-     cond $ fullChannel ccout
-     ccount <== readChannel ccout
-     consumeChannel ccout
-    
+     cond $ fullChannel ctoOut
+     v <- readChannel ctoOut
+     ccount <== v
+
     atom "wait_for_mon_frame" $ do
-     cond $ fullChannel mcout
-     mcount <== readChannel mcout
-     consumeChannel mcout
-    
+     cond $ fullChannel mtoOut
+     v <- readChannel mtoOut
+     mcount <== v
 
- printAllProbes
+  -- return input channels for use by the button
+  return (btcIn, btmIn, btoIn)
 
-
-compileAtom5 :: IO ()
-compileAtom5 = void $ A.compile ("atom5") defaults atom5
-  
-compileAtomWBS :: IO ()
-compileAtomWBS = void $ A.compile ("atom_wbs") defaults atom_wbs
 
 -- Utility Stuff -------------------------------------------------------
 
-zero, two, three :: Int64
-zero   = 0
-two    = 2
-three  = 3
+zero, one, three :: Int64
+zero = 0
+one = 1
+three = 3
 
 printAllProbes :: Atom ()
 printAllProbes = mapM_ printProbe =<< probes
+
+
 -- Configurations --------------------------------------------------------------
 
 -- | Default config for these specs
@@ -376,58 +261,25 @@ compileToC = do
                 ]
       )
 
+
 -- Main -----------------------------------------------------------------
 
 putHeader :: IO ()
 putHeader = putStrLn (replicate 72 '-')
 
-testCompile :: (String, Atom (), TrConfig, String) -> IO ()
-testCompile (nm, spec, cfg, q) = do
+translateToSally :: (String, Atom (), TrConfig, String) -> IO ()
+translateToSally (nm, spec, cfg, q) = do
   let fname = testDir </> nm ++ ".mcmt"
   compileToSally nm cfg fname spec (Just q)
   putStrLn ("compiled " ++ fname)
 
--- | List of (Name, Atom, Query) to translate and print
-suite :: [(String, Atom (), TrConfig, String)]
-suite =
-  [ ("A1", atom1, hybridCfg,
-        "(query A1_transition_system (=> A1_mfa_formula (<= 0 A1!atom1!x)))")
-  , ("A1b", atom1, defSpecCfg,
-        "(query A1b_transition_system (=> A1b_mfa_formula (<= 0 A1b!atom1!x)))")
-  , ("A2", atom2, hybridCfg,
-        "(query A2_transition_system (=> A2_mfa_formula (=> A2!atom2!alice!a A2!atom2!flag)))")
-  , ("A2b", atom2, fixedCfg,
-        "(query A2b_transition_system (=> A2b_mfa_formula (=> A2b!atom2!alice!a A2b!atom2!flag)))")
-  , ("A3", atom3, hybridCfg,
-        unwords [ "(query A3_transition_system"
-                , "  (=> A3_mfa_formula"
-                , "    (=> (not (= A3!atom3!bob!msg (-1))) A3!atom3!alice!done)))"])
-    -- different config from A3
-  , ("A3b", atom3, defSpecCfg,
-        unwords [ "(query A3b_transition_system"
-                , "  (=> A3b_mfa_formula"
-                , "    (=> (not (= A3b!atom3!bob!msg (-1))) A3b!atom3!alice!done)))"])
-    -- fewer state vars & different property
-  , ("A3min", atom3min, defSpecCfg,
-        unwords [ "(query A3min_transition_system"
-                , "  (=> A3min_mfa_formula"
-                , "    (=> (not (= A3min!atom3!bob!msg (-1))) (>= A3min!__t 1))))"])
-  , ("A4", atom4, defSpecCfg,
-        unwords [ "(query A4_transition_system"
-                , "  (=> A4_mfa_formula"
-                , "    (=> A4!atom4!nodeC!done (= A4!atom4!nodeC!msg 1))))"
-                , "\n\n"
-                , "(query A4_transition_system"
-                , "  (=> A4_mfa_formula"
-                , "    (=> A4!atom4!nodeC!done (= A4!__t 2))))"])
--- Need to add clocks to the language first		
- , ("A7", atom_wbs, defSpecCfg, 
-    "(query A1_transition_system (=> A1_mfa_formula (<= 0 A1!atom1!x)))")
-  ]
 
 main :: IO ()
 main = do
-  mapM_ testCompile suite
-  compileAtomWBS
+
   putStrLn "Compiling atom_wbs to C... (atom_wbs.{c,h})"
   compileToC
+
+  putStrLn "Compiling atom_wbs to Sally... (atom_wbs.mcmt)"
+  translateToSally
+    ("WBS", atom_wbs, defSpecCfg, "(query WBS_transition_system true)")

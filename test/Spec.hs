@@ -112,7 +112,10 @@ atom3Per = atom "atom3Per" $ do
   (cin, cout) <- channel "aTob" msgType
 
   atom "alice" $ do
+    done <- var "done" False
+    cond $ not_ (value done)
     writeChannel cin (Const goodMsgValue)
+    done <== Const True
 
   period nodeBPeriod . atom "bob" $ do
     msg <- int64 "msg" missingMsgValue
@@ -253,6 +256,10 @@ suite =
     -- receiver has a long period
   , ("A3per", atom3Per, defSpecCfg,
         unlines [ "(query A3per_transition_system"
+                , "(query A3per_transition_system"
+                , "  (<= 0 A3per!__t))"
+                , ""
+                , "(query A3per_transition_system"
                 , "    (=> (not (= A3per!atom3Per!bob!msg (-1))) (>= A3per!__t 1)))"])
   , ("A4", atom4, defSpecCfg,
         unlines [ "(query A4_transition_system"
