@@ -256,7 +256,6 @@ suite =
     -- receiver has a long period
   , ("A3per", atom3Per, defSpecCfg,
         unlines [ "(query A3per_transition_system"
-                , "(query A3per_transition_system"
                 , "  (<= 0 A3per!__t))"
                 , ""
                 , "(query A3per_transition_system"
