@@ -1,7 +1,7 @@
 -- |
 -- Module      :  SpecClocked
 -- Copyright   :  Benjamin Jones 2017
--- License     :  MIT
+-- License     :  BSD3
 --
 -- Maintainer  :  bjones@galois.com
 -- Stability   :  experimental
