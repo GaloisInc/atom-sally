@@ -36,21 +36,24 @@ typ :: Type
 typ = Int64
 type Typ = Int64
 
--- | Instantiate a switched star shaped ethernet network. The outputs are a
+-- | Instantiate a switched, broadcasting ethernet network. The outputs are a
 -- channel input/output for each node.
 --
--- o--\--\  /--/--o
---     \  S2  /
---      \/  \/
---      /\  /\
---     /  S1  \
--- o--/--/  \--\--o
+-- o--e--\ /--e--o
+--     \  S  /
+--      \/ \/
+--      /\ /\
+--     /  S  \
+-- o--e--/ \--e--o
 --
--- In the diagram, o's are nodes and S1, S2 are switches.
+-- In the diagram, o's are nodes, e's are "endpoints" and S's are switches.
+-- Furthermore, the nodes and endpoints on the right hand side are the same
+-- as the nodes and endpoints on the left hand side. The diagram is just
+-- unrolled for illustrative purposes.
 --
 -- TODO: The type of messages handled by the network is fixed to be 'typ'
 -- defined above. This is due to a limitation with the channel types that needs
--- top be addressed.
+-- to be addressed.
 --
 mkSWEther :: Int   -- ^ number of nodes on each side of the network
           -> Int   -- ^ number of switches in the network
