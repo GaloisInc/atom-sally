@@ -4,3 +4,4 @@ dist/
 deps
 test/*.c
 test/*.h
+.hlint.yaml
