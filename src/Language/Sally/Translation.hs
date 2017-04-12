@@ -19,7 +19,7 @@ module Language.Sally.Translation (
 import           Control.Arrow (second, (***))
 import           Data.Foldable (find, foldl')
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (catMaybes, fromMaybe)
+import           Data.Maybe (mapMaybe, fromMaybe)
 import           Data.Sequence ((><), (|>))
 import qualified Data.Sequence as Seq
 import           Data.List ((\\))
@@ -47,7 +47,7 @@ import           Language.Sally.Types
 translaborate :: Name
               -> TrConfig
               -> AEla.Atom ()
-              -> IO (TrResult)
+              -> IO TrResult
 translaborate name config atom' = do
   let aname = T.unpack . textFromName $ name
   res <- AEla.elaborate AUe.emptyMap aname atom'
@@ -161,11 +161,11 @@ trState conf name sh rules chans = SallyState (mkStateTypeName name) vars invars
     -- TODO (Maybe Name) for prefix is a little awkward here
     go :: Maybe Name -> AEla.StateHierarchy -> [(Name, SallyBaseType)]
     go prefix (AEla.StateHierarchy nm items) =
-      concatMap (go (Just $ prefix `bangPrefix` (trName nm))) items
+      concatMap (go (Just $ prefix `bangPrefix` trName nm)) items
     go prefix (AEla.StateVariable nm c) =
-      [(prefix `bangPrefix` (trName nm), trTypeConst c)]
+      [(prefix `bangPrefix` trName nm, trTypeConst c)]
     go prefix (AEla.StateChannel nm t) =
-      let (chanVar, chanTime) = mkChanStateNames (prefix `bangPrefix` (trName nm))
+      let (chanVar, chanTime) = mkChanStateNames (prefix `bangPrefix` trName nm)
       in [(chanVar, trType t), (chanTime, SReal)]
     go _prefix (AEla.StateArray _ _) = error "atom-sally does not yet support arrays"
 
@@ -179,8 +179,7 @@ trState conf name sh rules chans = SallyState (mkStateTypeName name) vars invars
     synthInvars =
       let cnm = AEla.cinfoName
           ctp = trType . AEla.cinfoType in
-      concatMap (\c -> [ ( mkFaultChanValueName (uglyHack . cnm $ c), ctp $ c)
-                         -- others?
+      concatMap (\c -> [ (mkFaultChanValueName (uglyHack (cnm c)), ctp c)
                        ]
                 ) chans
 
@@ -188,7 +187,7 @@ trState conf name sh rules chans = SallyState (mkStateTypeName name) vars invars
     -- constrained in the init block so that they remain at a constant value
     -- between 'faultTypeMin' and 'faultTypeMax' throughout a trace.
     faultStatusVars = [ (mkFaultNodeName name (AEla.ruleId r), SInt)
-                      | r@(AEla.Rule{}) <- rules ]
+                      | r@AEla.Rule{} <- rules ]
 
     clockVars = [(mkClockTimeName name, SReal)]
 
@@ -200,8 +199,7 @@ trState conf name sh rules chans = SallyState (mkStateTypeName name) vars invars
 
     -- debug output consists of one variable: __last_transition  which
     -- indicates the transition # (aka rule Id) to be taken last
-    debugVars = if cfgDebug conf then [(mkLastTransName name, SInt)]
-                                 else []
+    debugVars = [ (mkLastTransName name, SInt) | cfgDebug conf ]
 
 bangPrefix :: Maybe Name -> Name -> Name
 bangPrefix mn n = maybe n (`bangNames` n) mn
@@ -219,15 +217,15 @@ trInit conf name sh rules = SallyStateFormula (mkInitStateName name)
                                                 , faultFlagConstraints
                                                 ])
 
-    nodeInit = if AEla.isHierarchyEmpty sh then (SPConst True)
+    nodeInit = if AEla.isHierarchyEmpty sh then SPConst True
                                            else go Nothing sh
     go :: Maybe Name -> AEla.StateHierarchy -> SallyPred
     go prefix (AEla.StateHierarchy nm items) =
-      SPAnd (Seq.fromList $ map (go (Just $ prefix `bangPrefix` (trName nm))) items)
+      SPAnd (Seq.fromList $ map (go (Just $ prefix `bangPrefix` trName nm)) items)
     go prefix (AEla.StateVariable nm c) =
-      SPEq (varExpr' (prefix `bangPrefix` (trName nm))) (trConstE c)
+      SPEq (varExpr' (prefix `bangPrefix` trName nm)) (trConstE c)
     go prefix (AEla.StateChannel nm t) =
-      let (chanVar, chanTime) = mkChanStateNames (prefix `bangPrefix` (trName nm))
+      let (chanVar, chanTime) = mkChanStateNames (prefix `bangPrefix` trName nm)
       in SPAnd (  Seq.empty
                |> SPEq (varExpr' chanVar) (trInitForType t)
                |> SPEq (varExpr' chanTime) invalidTime)
@@ -244,8 +242,8 @@ trInit conf name sh rules = SallyStateFormula (mkInitStateName name)
     faultFlagConstraints =
       SPAnd (   Seq.fromList [SPLEq faultTypeMin' f | f <- faultExprs]
              >< Seq.fromList [SPLEq f faultTypeMax' | f <- faultExprs])
-    faultExprs = [ (varExpr' . mkFaultNodeName name . AEla.ruleId $ r)
-                 | r@(AEla.Rule{}) <- rules ]
+    faultExprs = [ varExpr' . mkFaultNodeName name . AEla.ruleId $ r
+                 | r@AEla.Rule{} <- rules ]
     faultTypeMin' = intExpr faultTypeMin
     faultTypeMax' = intExpr faultTypeMax
 
@@ -331,8 +329,8 @@ trFormulas conf name _sh rules chans = masterList ++ [masterFormula]
     periodPhasePred =
       let clkE   = varExpr' . mkClockTimeName $ name
           delayE = mkDelayExpr conf name
-          delE c = varExpr' . mkDeltaNameC $ c
-          enE c  = varExpr' . mkMultNameC $ c
+          delE   = varExpr' . mkDeltaNameC
+          enE    = varExpr' . mkMultNameC
           -- lookup the phase of a rule
           lkPha rid = case find ((== rid) . AEla.ruleId) rules of
             Nothing -> error $ "Translation: trFormulas: cannot resolve ruleId "
@@ -390,13 +388,13 @@ trRules :: TrConfig
         -> [AEla.ChanInfo]
         -> [AEla.Rule]
         -> [SallyTransition]
-trRules conf name st umap chans rules = (catMaybes $ map trRule rules)
+trRules conf name st umap chans rules = mapMaybe trRule rules
                                       ++ [clock, master]
   where trRule :: AEla.Rule -> Maybe SallyTransition
-        trRule r@(AEla.Rule{}) = Just $ SallyTransition (mkTName r)
-                                                        (mkStateTypeName name)
-                                                        (mkLetBinds r)
-                                                        (mkPred r)
+        trRule r@AEla.Rule{} = Just $ SallyTransition (mkTName r)
+                                                      (mkStateTypeName name)
+                                                      (mkLetBinds r)
+                                                      (mkPred r)
         trRule _ = Nothing  -- skip assertions and coverage
 
         -- master transition is (for now) the disjunction of all minor
@@ -408,7 +406,7 @@ trRules conf name st umap chans rules = (catMaybes $ map trRule rules)
         master = SallyTransition (mkMasterTransName name)
                                  (mkStateTypeName name)
                                  []
-                                 (masterPred)
+                                 masterPred
         minorTrans = map (SPExpr . SEVar . varFromName . mkTName) rules
         nodeTrans = simplifyOrs $ SPOr (   Seq.fromList minorTrans
                                         |> SPExpr (varExpr' (mkClockTransName name)))
@@ -423,7 +421,7 @@ trRules conf name st umap chans rules = (catMaybes $ map trRule rules)
         -- expression representing the minimum time on the calendar
         -- (ignoring invalid times)
         clockPred =
-          if length chans > 0
+          if not (null chans)
              then let m = minExpr calTimes (Just invalidTime)
                   in SPAnd $ (Seq.empty
                                |> SPLt (mkClockStateExpr  name) m
@@ -441,7 +439,7 @@ trRules conf name st umap chans rules = (catMaybes $ map trRule rules)
         periodPhaseUsed = [mkDeltaNameC c | c <- chans ]
                        ++ [mkMultNameC c | c <- chans ]
         clkUsed = [mkClockTimeName name]
-               ++ (if cfgDebug conf then [mkLastTransName name] else [])
+               ++ [ mkLastTransName name | cfgDebug conf ]
                ++ periodPhaseUsed
         clkLeftovers = Seq.fromList $ map handleLeftovers (stVars \\ clkUsed)
         calTimes = map ( varExpr' . stateName . snd . mkChanStateNames
@@ -455,14 +453,14 @@ trRules conf name st umap chans rules = (catMaybes $ map trRule rules)
         stVars = map fst (sVars st)
 
         mkTName :: AEla.Rule -> Name
-        mkTName r@(AEla.Rule{}) = mkTransitionName (AEla.ruleId r) name
+        mkTName r@AEla.Rule{} = mkTransitionName (AEla.ruleId r) name
         mkTName _ = error "impossible! assert or coverage rule found in mkTName"
 
         getUEs :: AEla.Rule -> [(AUe.Hash, SallyVar)]
         getUEs r = map (second trExprRef) . AAna.topo umap $ AEla.allUEs r
 
         mkLetBinds :: AEla.Rule -> [SallyLet]
-        mkLetBinds r@(AEla.Rule{}) =
+        mkLetBinds r@AEla.Rule{} =
           let ues = getUEs r
           in map (\(h, v) -> (v, trUExpr name umap chans ues h)) ues
         mkLetBinds _ = error "impossible! assert or coverage rule found in mkLetBinds"
@@ -471,7 +469,7 @@ trRules conf name st umap chans rules = (catMaybes $ map trRule rules)
         -- in Atom carry not a name, but a structured heirarchy of names that
         -- can be flattened differently depending on the compile target
         mkPred :: AEla.Rule -> SallyPred
-        mkPred r@(AEla.Rule{}) =
+        mkPred r@AEla.Rule{} =
           let ues = getUEs r
               lkErr h = "trRules: failed to lookup untyped expr " ++ show h
               lk h = fromMaybe (error $ lkErr h) $ lookup h ues
@@ -530,18 +528,14 @@ trRules conf name st umap chans rules = (catMaybes $ map trRule rules)
                         ++ map (fst . chanNames . fst) (AEla.ruleChanWrite r)
                         ++ map (snd . chanNames . fst) (AEla.ruleChanWrite r)
                         ++ map (snd . chanNames) (AEla.ruleChanRead r)
-                        ++ (if cfgDebug conf
-                              then [mkLastTransName name]
-                              else [])
+                        ++ [ mkLastTransName name | cfgDebug conf ]
                         ++ periodPhaseUsed
 
               -- leftovers are vars not explicitly mentioned in the atom body,
               -- we need to make sure they stutter using 'handleLeftovers'
               leftovers = stVars \\ stVarsUsed
 
-              debugOps = if cfgDebug conf
-                            then [SPEq lastTransE' (intExpr (AEla.ruleId r))]
-                            else []
+              debugOps = [ SPEq lastTransE' (intExpr (AEla.ruleId r)) | cfgDebug conf ]
 
               ops = map handleAssign (AEla.ruleAssigns r)
                  ++ map handleChanWrite (AEla.ruleChanWrite r)
@@ -622,7 +616,7 @@ mkFaultCheck :: Name             -- ^ Atom name
              -> ATyp.Name        -- ^ channel name
              -> SallyExpr
 mkFaultCheck name chans nm = muxExpr checkFault calVal faultVal
-  where checkFault = SEPre $ SPEq (varExpr' . stateName $ (mkFaultNodeName name srcId))
+  where checkFault = SEPre $ SPEq (varExpr' (stateName (mkFaultNodeName name srcId)))
                                   (toSallyExpr NonFaulty)
         -- TODO clean up all these variable name expression compositions
         faultVal = varExpr' . inputName . mkFaultChanValueName . uglyHack $ nm
