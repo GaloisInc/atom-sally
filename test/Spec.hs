@@ -25,8 +25,8 @@ msgType = Int64  -- Atom 'Type' value
 atom1 :: Atom ()
 atom1 = atom "atom1" $ do
   x <- int8  "x" 0
-  cond $ (value x) <. 10
-  x <== (value x) + 1
+  cond $ value x <. 10
+  x <== value x + 1
 
 
 -- | Two Atoms communicate through a flag
@@ -37,11 +37,11 @@ atom2 = atom "atom2" $ do
 
   atom "alice" $ do
     a <- bool "a" False
-    cond $ (value f)
-    a <== Const True
+    cond (value f)
+    a <== true
 
   atom "bob" $ do
-    f <== Const True
+    f <== true
 
 
 -- | Two Atoms communicate through a *channel*
@@ -53,9 +53,8 @@ atom3 = atom "atom3" $ do
   let
     -- | Special message values indicating "no message present", and "correct
     -- (intended) message"
-    missingMsgValue, goodMsgValue  :: MsgType
-    missingMsgValue = -1
-    goodMsgValue    = 1
+    missingMsgValue = -1 :: MsgType
+    goodMsgValue    = 1  :: MsgType
 
   (cin, cout) <- channel "aTob" msgType
 
@@ -168,37 +167,58 @@ atom4 = atom "atom4" $ do
 
 -- | Atom setting and using a timer based on the time at which it
 --   received a message.
--- atom5 :: Atom()
--- atom5 = atom "atom5" $ do
---
---   let
---     -- | Special message values indicating "no message present", and "correct
---     -- (intended) message"
---     missingMsgValue, goodMsgValue  :: MsgType
---     missingMsgValue = -1
---     goodMsgValue    = 1
---
---   (cin, cout) <- channel "chan" msgType
---
---   atom "alice" $ do
---     done <- bool "done" False
---     writeChannel cin (Const goodMsgValue)
---     done <== Const True
---
---   atom "bob" $ do
---
---     rxTime <- word64 "rxTime" 0
---
---     atom "recMsg"  $ do
---       msg <- int64 "msg" missingMsgValue
---       cond $ fullChannel cout
---       msg <== readChannel cout
---       rxTime <== clock
---
---     atom "timerDone" $ do
---       local <- bool "local" False
---       cond (value rxTime + 1000 >. clock)
---       local <== Const True
+atom5 :: Atom()
+atom5 = atom "atom5" $ do
+
+  let
+    -- | Special message values indicating "no message present", and "correct
+    -- (intended) message"
+    missingMsgValue, goodMsgValue  :: MsgType
+    missingMsgValue = -1
+    goodMsgValue    = 1
+
+  (cin, cout) <- channel "chan" msgType
+
+  atom "alice" $ do
+    done <- bool "done" False
+    writeChannel cin (Const goodMsgValue)
+    done <== Const True
+
+  atom "bob" $ do
+
+    rxTime <- word64 "rxTime" 0
+
+    atom "recMsg"  $ do
+      msg <- int64 "msg" missingMsgValue
+      cond $ fullChannel cout
+      m <- readChannel cout
+      msg <== m
+      rxTime <== clock
+
+    atom "timerDone" $ do
+      local <- bool "local" False
+      cond (value rxTime + 1000 >. clock)
+      local <== Const True
+
+-- | An atom for testing the difference between the regular guard 'cond' and
+-- the non-inheriting version 'cond\''.
+atom6 :: Atom ()
+atom6 = atom "atom6" $ do
+  a <- bool "a" True
+  b <- bool "b" True
+
+  -- take at least one transition
+  cond  (value a)  -- subnode inherits
+  cond' (value b)  -- subnode ignores
+  a <== false
+  b <== false
+
+  -- sub_node does not inherit guard on 'a'
+  atom "subnode" $ do
+    c <- bool "c" True
+    cond (value c)
+    c <== false
+
 
 -- Configurations --------------------------------------------------------------
 
@@ -266,8 +286,9 @@ suite =
                 , "\n\n"
                 , "(query A4_transition_system"
                 , "    (=> A4!atom4!nodeC!done (= A4!__t 2)))"])
+  , ("A5", atom5, defSpecCfg, "")
+  , ("A6", atom5, defSpecCfg, "")
   ]
 
 main :: IO ()
-main = do
-  mapM_ testCompile suite
+main = mapM_ testCompile suite
