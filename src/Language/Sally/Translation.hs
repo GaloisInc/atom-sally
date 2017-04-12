@@ -560,7 +560,7 @@ trUExpr name umap chans ues h =
   case AUe.getUE h umap of
     AUe.MUVRef (AUe.MUV _ k _)     -> varExpr' . stateName . uglyHack $ k
     AUe.MUVRef (AUe.MUVArray _ _)  -> aLangErr "arrays"
-    AUe.MUVRef (AUe.MUVExtern k _) -> aLangErr $ "external variable " ++ k
+    AUe.MUVRef (AUe.MUVExtern k _) -> varExpr' . stateName . uglyHack $ k
     AUe.MUVRef (AUe.MUVChannel _ k _)    -> mkFaultCheck name chans k
     AUe.MUVRef (AUe.MUVChannelReady _ k) -> mkTimeCheck name k
     AUe.MUCast _ _     -> aLangErr "casting"
@@ -743,8 +743,9 @@ mkPeriodPhaseFormulaName = (`scoreNames` "period_phase_formula")
 mkLemmasFormulaName :: Name -> Name
 mkLemmasFormulaName = (`scoreNames` "lemmas")
 
+-- | Global clock value. Matches constant in "atom".
 mkClockTimeName :: Name -> Name
-mkClockTimeName nm = nm `bangNames` "__t"
+mkClockTimeName nm = nm `bangNames` "__global_clock"
 
 -- | clock state (with state namespace)
 mkClockStateExpr :: Name -> SallyExpr
