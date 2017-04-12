@@ -493,6 +493,10 @@ trRules conf name st umap chans rules = mapMaybe trRule rules
               -- timeout
               chanNames :: ACTyp.HasChan a => a -> (Name, Name)
               chanNames = mkChanStateNames . uglyHack . ACTyp.chanName
+
+              enableExpr = andExprs [ SEVar (lk (AEla.ruleEnable r))
+                                    , SEVar (lk (AEla.ruleEnableNH r))]
+
               handleChanWrite (cin, h) =
                 let mkE = varExpr' . stateName
                     mkE' = varExpr' . nextName
@@ -503,7 +507,6 @@ trRules conf name st umap chans rules = mapMaybe trRule rules
                     globTimeExpr = mkClockStateExpr name
                     -- propagate the rule's enable condition to each channel
                     -- write
-                    enableExpr = SEVar (lk (AEla.ruleEnable r))
                     messageDelay = realExpr (cfgMessageDelay conf)
                     -- timeout is current global time + message delay +
                     -- exactly enough time (delta) to get to the receiver's
@@ -520,7 +523,6 @@ trRules conf name st umap chans rules = mapMaybe trRule rules
               handleChanConsume cout =
                 let calTimeE  = varExpr' . stateName . snd . chanNames $ cout
                     calTimeE' = varExpr' . nextName . snd . chanNames $ cout
-                    enableExpr = SEVar (lk (AEla.ruleEnable r))
                     newTime = muxExpr enableExpr invalidTime calTimeE
                 in SPEq calTimeE' newTime
               -- state vars in this rule
