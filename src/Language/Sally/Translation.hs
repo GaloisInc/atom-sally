@@ -17,7 +17,7 @@ module Language.Sally.Translation (
 ) where
 
 import           Control.Arrow (second, (***))
-import           Data.Foldable (find, foldl')
+import           Data.Foldable (foldl')
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (mapMaybe, fromMaybe)
 import           Data.Sequence ((><), (|>))
@@ -154,7 +154,6 @@ trState conf name sh rules chans = SallyState (mkStateTypeName name) vars invars
                                         else go Nothing sh)
            ++ faultStatusVars
            ++ clockVars
-           ++ periodPhaseVars
            ++ debugVars
 
     -- Recursive helper function to traverse the state hierarchy
@@ -190,12 +189,6 @@ trState conf name sh rules chans = SallyState (mkStateTypeName name) vars invars
                       | r@AEla.Rule{} <- rules ]
 
     clockVars = [(mkClockTimeName name, SReal)]
-
-    periodPhaseVars =
-      concatMap (\c -> [ (mkDeltaNameC c, SReal)
-                       , (mkMultNameC c, SInt)
-                       ]
-                ) chans
 
     -- debug output consists of one variable: __last_transition  which
     -- indicates the transition # (aka rule Id) to be taken last
@@ -264,10 +257,10 @@ trFormulas :: TrConfig
         -> [AEla.Rule]
         -> [AEla.ChanInfo]
         -> [SallyStateFormula]
-trFormulas conf name _sh rules chans = masterList ++ [masterFormula]
+trFormulas conf name _sh rules _chans = masterList ++ [masterFormula]
   where                                -- ^ order matters here
     -- Conjunction of all the global assumptions
-    masterList = [mfaFormula, periodPhaseFormula, lemmasFormula]
+    masterList = [mfaFormula, lemmasFormula]
     masterPred = SPAnd (Seq.fromList fList)
       where fList = map (SPExpr . varExpr' . sfName) masterList
     masterFormula = SallyStateFormula (mkAssumptionsFormulaName name)
@@ -320,46 +313,6 @@ trFormulas conf name _sh rules chans = masterList ++ [masterFormula]
     nodeFs mp = [(nodeFaultE r, lkFault r mp) | r <- realRules]
     -- TODO emit an error if 'mp' contains names that are not node names
     realRules = [r | r@AEla.Rule{} <- rules]
-
-    -- Formulas which constrain the period and phase calculations
-    --
-    periodPhaseFormula = SallyStateFormula (mkPeriodPhaseFormulaName name)
-                                           (mkStateTypeName name)
-                                           periodPhasePred
-    periodPhasePred =
-      let clkE   = varExpr' . mkClockTimeName $ name
-          delayE = mkDelayExpr conf name
-          delE   = varExpr' . mkDeltaNameC
-          enE    = varExpr' . mkMultNameC
-          -- lookup the phase of a rule
-          lkPha rid = case find ((== rid) . AEla.ruleId) rules of
-            Nothing -> error $ "Translation: trFormulas: cannot resolve ruleId "
-                            ++ show rid
-            Just r -> case AEla.rulePhase r of
-                        AEla.MinPhase x -> intExpr x
-                        AEla.ExactPhase x -> intExpr x
-          -- lookup the period of a rule
-          lkPer rid = case find ((== rid) . AEla.ruleId) rules of
-            Nothing -> error $ "Translation: trFormulas: cannot resolve ruleId "
-                            ++ show rid
-            Just r -> intExpr (AEla.rulePeriod r)
-          noRecvErr c = error $ "trFormulas: periodPhasePred: channel "
-                             ++ show (AEla.cinfoName c) ++ " has no receiver."
-          getPerE c = case AEla.cinfoRecv c of
-            Nothing -> noRecvErr c
-            Just rcv -> lkPer rcv
-          getPhaE c = case AEla.cinfoRecv c of
-            Nothing -> noRecvErr c
-            Just rcv -> lkPha rcv
-
-          perPlusPhaseE c = addExpr (multExpr (getPerE c) (enE c)) (getPhaE c)
-          -- delta, N constraint for one rule/transition
-          constraintE c =
-            andPreds [ SPEq (addExpr (addExpr clkE delayE) (delE c)) (perPlusPhaseE c)
-                     , SPLEq zeroExpr (delE c)    -- 0 <= delta
-                     , SPLt (delE c) (getPerE c)  -- delta < Period
-                     ]
-      in simplifyAnds . SPAnd . Seq.fromList . map constraintE $ chans
 
     -- Lemmas that are automatically generated
     --
@@ -436,11 +389,8 @@ trRules conf name st umap chans rules = mapMaybe trRule rules
         -- TODO: this leftovers mechanism is really clumsy. Whenever a new
         -- state variable is added the leftovers in every transition have to
         -- be modified...
-        periodPhaseUsed = [mkDeltaNameC c | c <- chans ]
-                       ++ [mkMultNameC c | c <- chans ]
         clkUsed = [mkClockTimeName name]
                ++ [ mkLastTransName name | cfgDebug conf ]
-               ++ periodPhaseUsed
         clkLeftovers = Seq.fromList $ map handleLeftovers (stVars \\ clkUsed)
         calTimes = map ( varExpr' . stateName . snd . mkChanStateNames
                        . uglyHack . AEla.cinfoName
@@ -497,7 +447,7 @@ trRules conf name st umap chans rules = mapMaybe trRule rules
               enableExpr = andExprs [ SEVar (lk (AEla.ruleEnable r))
                                     , SEVar (lk (AEla.ruleEnableNH r))]
 
-              handleChanWrite (cin, h) =
+              handleChanWrite (cin, h, d) =
                 let mkE = varExpr' . stateName
                     mkE' = varExpr' . nextName
                     csnms = chanNames cin
@@ -507,7 +457,10 @@ trRules conf name st umap chans rules = mapMaybe trRule rules
                     globTimeExpr = mkClockStateExpr name
                     -- propagate the rule's enable condition to each channel
                     -- write
-                    messageDelay = realExpr (cfgMessageDelay conf)
+                    messageDelay = realExpr $
+                      case d of
+                        ACTyp.DelayDefault -> cfgMessageDelay conf
+                        ACTyp.DelayTicks t -> fromIntegral t
                     -- timeout is current global time + message delay +
                     -- exactly enough time (delta) to get to the receiver's
                     -- next execution time (ala. period and phase)
@@ -527,11 +480,10 @@ trRules conf name st umap chans rules = mapMaybe trRule rules
                 in SPEq calTimeE' newTime
               -- state vars in this rule
               stVarsUsed = map (vName . fst) (AEla.ruleAssigns r)
-                        ++ map (fst . chanNames . fst) (AEla.ruleChanWrite r)
-                        ++ map (snd . chanNames . fst) (AEla.ruleChanWrite r)
+                        ++ map (\(c,_,_) -> fst (chanNames c)) (AEla.ruleChanWrite r)
+                        ++ map (\(c,_,_) -> snd (chanNames c)) (AEla.ruleChanWrite r)
                         ++ map (snd . chanNames) (AEla.ruleChanRead r)
                         ++ [ mkLastTransName name | cfgDebug conf ]
-                        ++ periodPhaseUsed
 
               -- leftovers are vars not explicitly mentioned in the atom body,
               -- we need to make sure they stutter using 'handleLeftovers'
@@ -698,17 +650,6 @@ mkDeltaName :: Name -> Name
 mkDeltaName cnm =
   cnm `bangNames` "delta"
 
-mkDeltaNameC :: AEla.ChanInfo -> Name
-mkDeltaNameC = mkDeltaName . uglyHack . AEla.cinfoName
-
--- | cname --> @cname!multiplier@
-mkMultName :: Name -> Name
-mkMultName cnm =
-  cnm `bangNames` "multiplier"
-
-mkMultNameC :: AEla.ChanInfo -> Name
-mkMultNameC = mkMultName . uglyHack . AEla.cinfoName
-
 -- | name1 name2 --> @name1!name2@
 mkNodeName :: Name -> Name -> Name
 mkNodeName _nm = id
@@ -737,9 +678,6 @@ mkAssumptionsFormulaName = (`scoreNames` "assumptions")
 mkMFAFormulaName :: Name -> Name
 mkMFAFormulaName = (`scoreNames` "mfa_formula")
 
-mkPeriodPhaseFormulaName :: Name -> Name
-mkPeriodPhaseFormulaName = (`scoreNames` "period_phase_formula")
-
 mkLemmasFormulaName :: Name -> Name
 mkLemmasFormulaName = (`scoreNames` "lemmas")
 
@@ -754,11 +692,6 @@ mkClockStateExpr = varExpr' . stateName . mkClockTimeName
 -- | next clock state
 mkClockStateExpr' :: Name -> SallyExpr
 mkClockStateExpr' = varExpr' . nextName . mkClockTimeName
-
--- | Construct the expression representing the global constant message delay.
--- TODO: make this a declared constant in the file using the `name` namespace
-mkDelayExpr :: TrConfig -> Name -> SallyExpr
-mkDelayExpr conf _name = realExpr (cfgMessageDelay conf)
 
 -- | s/\./!/g
 uglyHack :: String -> Name
