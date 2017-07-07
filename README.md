@@ -1,6 +1,8 @@
-# Atom to Sally Translator
+# THIS PROJECT IS DEPRECATED. 
 
-[![Build Status](https://travis-ci.org/GaloisInc/atom-sally.svg?branch=master)](https://travis-ci.org/GaloisInc/atom-sally)
+Atom-sally has been subsumed by [LIMA](https://github.com/GaloisInc/LIMA).
+
+# Atom-sally
 
 This is a library for translating Atom [1] [1b] specifications into transition
 systems in the model language of Sally [2].
